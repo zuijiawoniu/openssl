@@ -13,20 +13,6 @@
 #include "dh_locl.h"
 #include <openssl/engine.h>
 
-static const DH_METHOD *default_DH_method = NULL;
-
-void DH_set_default_method(const DH_METHOD *meth)
-{
-    default_DH_method = meth;
-}
-
-const DH_METHOD *DH_get_default_method(void)
-{
-    if (!default_DH_method)
-        default_DH_method = DH_OpenSSL();
-    return default_DH_method;
-}
-
 int DH_set_method(DH *dh, const DH_METHOD *meth)
 {
     /*
@@ -111,7 +97,7 @@ void DH_free(DH *r)
     if (r == NULL)
         return;
 
-    CRYPTO_atomic_add(&r->references, -1, &i, r->lock);
+    CRYPTO_DOWN_REF(&r->references, &i, r->lock);
     REF_PRINT_COUNT("DH", r);
     if (i > 0)
         return;
@@ -142,7 +128,7 @@ int DH_up_ref(DH *r)
 {
     int i;
 
-    if (CRYPTO_atomic_add(&r->references, 1, &i, r->lock) <= 0)
+    if (CRYPTO_UP_REF(&r->references, &i, r->lock) <= 0)
         return 0;
 
     REF_PRINT_COUNT("DH", r);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2004-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -37,13 +37,14 @@ static int get_index(CA_DB *db, char *id, char type)
     int i;
     if (id == NULL)
         return -1;
-    if (type == DB_SRP_INDEX)
+    if (type == DB_SRP_INDEX) {
         for (i = 0; i < sk_OPENSSL_PSTRING_num(db->db->data); i++) {
             pp = sk_OPENSSL_PSTRING_value(db->db->data, i);
             if (pp[DB_srptype][0] == DB_SRP_INDEX
                 && strcmp(id, pp[DB_srpid]) == 0)
                 return i;
-    } else
+        }
+    } else {
         for (i = 0; i < sk_OPENSSL_PSTRING_num(db->db->data); i++) {
             pp = sk_OPENSSL_PSTRING_value(db->db->data, i);
 
@@ -51,6 +52,7 @@ static int get_index(CA_DB *db, char *id, char type)
                 && strcmp(id, pp[DB_srpid]) == 0)
                 return i;
         }
+    }
 
     return -1;
 }
@@ -92,10 +94,8 @@ static int update_index(CA_DB *db, char **row)
     int i;
 
     irow = app_malloc(sizeof(*irow) * (DB_NUMBER + 1), "row pointers");
-    for (i = 0; i < DB_NUMBER; i++) {
+    for (i = 0; i < DB_NUMBER; i++)
         irow[i] = row[i];
-        row[i] = NULL;
-    }
     irow[DB_NUMBER] = NULL;
 
     if (!TXT_DB_insert(db->db, irow)) {
@@ -119,32 +119,35 @@ static char *srp_verify_user(const char *user, const char *srp_verifier,
                              char *srp_usersalt, const char *g, const char *N,
                              const char *passin, int verbose)
 {
-    char password[1024];
+    char password[1025];
     PW_CB_DATA cb_tmp;
     char *verifier = NULL;
     char *gNid = NULL;
+    int len;
 
     cb_tmp.prompt_info = user;
     cb_tmp.password = passin;
 
-    if (password_callback(password, sizeof(password), 0, &cb_tmp) > 0) {
+    len = password_callback(password, sizeof(password)-1, 0, &cb_tmp);
+    if (len > 0) {
+        password[len] = 0;
         if (verbose)
             BIO_printf(bio_err,
                        "Validating\n   user=\"%s\"\n srp_verifier=\"%s\"\n srp_usersalt=\"%s\"\n g=\"%s\"\n N=\"%s\"\n",
                        user, srp_verifier, srp_usersalt, g, N);
-        BIO_printf(bio_err, "Pass %s\n", password);
+        if (verbose > 1)
+            BIO_printf(bio_err, "Pass %s\n", password);
 
         OPENSSL_assert(srp_usersalt != NULL);
-        if (!
-            (gNid =
-             SRP_create_verifier(user, password, &srp_usersalt, &verifier, N,
-                                 g))) {
+        if ((gNid = SRP_create_verifier(user, password, &srp_usersalt,
+                                        &verifier, N, g)) == NULL) {
             BIO_printf(bio_err, "Internal error validating SRP verifier\n");
         } else {
             if (strcmp(verifier, srp_verifier))
                 gNid = NULL;
             OPENSSL_free(verifier);
         }
+        OPENSSL_cleanse(password, len);
     }
     return gNid;
 }
@@ -153,27 +156,30 @@ static char *srp_create_user(char *user, char **srp_verifier,
                              char **srp_usersalt, char *g, char *N,
                              char *passout, int verbose)
 {
-    char password[1024];
+    char password[1025];
     PW_CB_DATA cb_tmp;
     char *gNid = NULL;
     char *salt = NULL;
+    int len;
     cb_tmp.prompt_info = user;
     cb_tmp.password = passout;
 
-    if (password_callback(password, sizeof(password), 1, &cb_tmp) > 0) {
+    len = password_callback(password, sizeof(password)-1, 1, &cb_tmp);
+    if (len > 0) {
+        password[len] = 0;
         if (verbose)
             BIO_printf(bio_err, "Creating\n user=\"%s\"\n g=\"%s\"\n N=\"%s\"\n",
                        user, g, N);
-        if (!
-            (gNid =
-             SRP_create_verifier(user, password, &salt, srp_verifier, N,
-                                 g))) {
+        if ((gNid = SRP_create_verifier(user, password, &salt,
+                                        srp_verifier, N, g)) == NULL) {
             BIO_printf(bio_err, "Internal error creating SRP verifier\n");
-        } else
+        } else {
             *srp_usersalt = salt;
+        }
+        OPENSSL_cleanse(password, len);
         if (verbose > 1)
-            BIO_printf(bio_err, "gNid=%s salt =\"%s\"\n verifier =\"%s\"\n", gNid,
-                       salt, *srp_verifier);
+            BIO_printf(bio_err, "gNid=%s salt =\"%s\"\n verifier =\"%s\"\n",
+                       gNid, salt, *srp_verifier);
 
     }
     return gNid;
@@ -186,7 +192,7 @@ typedef enum OPTION_choice {
     OPT_PASSIN, OPT_PASSOUT, OPT_ENGINE
 } OPTION_CHOICE;
 
-OPTIONS srp_options[] = {
+const OPTIONS srp_options[] = {
     {"help", OPT_HELP, '-', "Display this summary"},
     {"verbose", OPT_VERBOSE, '-', "Talk a lot while doing things"},
     {"config", OPT_CONFIG, '<', "A config file"},
@@ -209,6 +215,7 @@ OPTIONS srp_options[] = {
 
 int srp_main(int argc, char **argv)
 {
+    ENGINE *e = NULL;
     CA_DB *db = NULL;
     CONF *conf = NULL;
     int gNindex = -1, maxgN = -1, ret = 1, errors = 0, verbose = 0, i;
@@ -250,7 +257,7 @@ int srp_main(int argc, char **argv)
         case OPT_LIST:
             if (mode != OPT_ERR) {
                 BIO_printf(bio_err,
-                           "%s: Only one of -add/delete-modify/-list\n",
+                           "%s: Only one of -add/-delete/-modify/-list\n",
                            prog);
                 goto opthelp;
             }
@@ -269,14 +276,14 @@ int srp_main(int argc, char **argv)
             passoutarg = opt_arg();
             break;
         case OPT_ENGINE:
-            (void)setup_engine(opt_arg(), 0);
+            e = setup_engine(opt_arg(), 0);
             break;
         }
     }
     argc = opt_num_rest();
     argv = opt_rest();
 
-    if (srpvfile && configfile) {
+    if (srpvfile != NULL && configfile != NULL) {
         BIO_printf(bio_err,
                    "-srpvfile and -configfile cannot be specified together.\n");
         goto end;
@@ -292,7 +299,7 @@ int srp_main(int argc, char **argv)
                    "Need at least one user for options -add, -delete, -modify. \n");
         goto opthelp;
     }
-    if ((passin || passout) && argc != 1) {
+    if ((passinarg != NULL || passoutarg != NULL) && argc != 1) {
         BIO_printf(bio_err,
                    "-passin, -passout arguments only valid with one user.\n");
         goto opthelp;
@@ -303,8 +310,8 @@ int srp_main(int argc, char **argv)
         goto end;
     }
 
-    if (!srpvfile) {
-        if (!configfile)
+    if (srpvfile == NULL) {
+        if (configfile == NULL)
             configfile = default_config_file;
 
         if (verbose)
@@ -392,17 +399,15 @@ int srp_main(int argc, char **argv)
 
         if (user != NULL && verbose > 1)
             BIO_printf(bio_err, "Processing user \"%s\"\n", user);
-        if ((userindex = get_index(db, user, 'U')) >= 0) {
+        if ((userindex = get_index(db, user, 'U')) >= 0)
             print_user(db, userindex, (verbose > 0) || mode == OPT_LIST);
-        }
 
         if (mode == OPT_LIST) {
             if (user == NULL) {
                 BIO_printf(bio_err, "List all users\n");
 
-                for (i = 0; i < sk_OPENSSL_PSTRING_num(db->db->data); i++) {
+                for (i = 0; i < sk_OPENSSL_PSTRING_num(db->db->data); i++)
                     print_user(db, i, 1);
-                }
             } else if (userindex < 0) {
                 BIO_printf(bio_err,
                            "user \"%s\" does not exist, ignored. t\n", user);
@@ -550,10 +555,11 @@ int srp_main(int argc, char **argv)
                 doupdatedb = 1;
             }
         }
-        if (--argc > 0)
+        if (--argc > 0) {
             user = *(argv++);
-        else {
-            user = NULL;
+        } else {
+            /* no more processing in any mode if no users left */
+            break;
         }
     }
 
@@ -598,10 +604,11 @@ int srp_main(int argc, char **argv)
     OPENSSL_free(passout);
     if (ret)
         ERR_print_errors(bio_err);
-    if (randfile)
+    if (randfile != NULL)
         app_RAND_write_file(randfile);
     NCONF_free(conf);
     free_index(db);
+    release_engine(e);
     return (ret);
 }
 #endif

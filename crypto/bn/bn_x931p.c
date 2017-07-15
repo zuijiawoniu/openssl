@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2011-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -62,10 +62,10 @@ int BN_X931_derive_prime_ex(BIGNUM *p, BIGNUM *p1, BIGNUM *p2,
         return 0;
 
     BN_CTX_start(ctx);
-    if (!p1)
+    if (p1 == NULL)
         p1 = BN_CTX_get(ctx);
 
-    if (!p2)
+    if (p2 == NULL)
         p2 = BN_CTX_get(ctx);
 
     t = BN_CTX_get(ctx);
@@ -178,6 +178,8 @@ int BN_X931_generate_Xpq(BIGNUM *Xp, BIGNUM *Xq, int nbits, BN_CTX *ctx)
 
     BN_CTX_start(ctx);
     t = BN_CTX_get(ctx);
+    if (t == NULL)
+        goto err;
 
     for (i = 0; i < 1000; i++) {
         if (!BN_rand(Xq, nbits, BN_RAND_TOP_TWO, BN_RAND_BOTTOM_ANY))
@@ -216,10 +218,12 @@ int BN_X931_generate_prime_ex(BIGNUM *p, BIGNUM *p1, BIGNUM *p2,
     int ret = 0;
 
     BN_CTX_start(ctx);
-    if (!Xp1)
+    if (Xp1 == NULL)
         Xp1 = BN_CTX_get(ctx);
-    if (!Xp2)
+    if (Xp2 == NULL)
         Xp2 = BN_CTX_get(ctx);
+    if (Xp1 == NULL || Xp2 == NULL)
+        goto error;
 
     if (!BN_rand(Xp1, 101, BN_RAND_TOP_ONE, BN_RAND_BOTTOM_ANY))
         goto error;

@@ -13,6 +13,7 @@
 #include <openssl/x509.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
+#include "testutil.h"
 
 static STACK_OF(X509) *load_certs_from_file(const char *filename)
 {
@@ -102,7 +103,7 @@ static int test_alt_chains_cert_forgery(const char *roots_f,
     lookup = X509_STORE_add_lookup(store, X509_LOOKUP_file());
     if (lookup == NULL)
         goto err;
-    if(!X509_LOOKUP_load_file(lookup, roots_f, X509_FILETYPE_PEM))
+    if (!X509_LOOKUP_load_file(lookup, roots_f, X509_FILETYPE_PEM))
         goto err;
 
     untrusted = load_certs_from_file(untrusted_f);
@@ -110,7 +111,7 @@ static int test_alt_chains_cert_forgery(const char *roots_f,
     if ((bio = BIO_new_file(bad_f, "r")) == NULL)
         goto err;
 
-    if((x = PEM_read_bio_X509(bio, NULL, 0, NULL)) == NULL)
+    if ((x = PEM_read_bio_X509(bio, NULL, 0, NULL)) == NULL)
         goto err;
 
     sctx = X509_STORE_CTX_new();
@@ -132,31 +133,17 @@ static int test_alt_chains_cert_forgery(const char *roots_f,
     BIO_free(bio);
     sk_X509_pop_free(untrusted, X509_free);
     X509_STORE_free(store);
-    if (ret != 1)
-        ERR_print_errors_fp(stderr);
     return ret;
 }
 
-int main(int argc, char **argv)
+int test_main(int argc, char **argv)
 {
-    CRYPTO_set_mem_debug(1);
-    CRYPTO_mem_ctrl(CRYPTO_MEM_CHECK_ON);
-
     if (argc != 4) {
-        fprintf(stderr, "usage: verify_extra_test roots.pem untrusted.pem bad.pem\n");
-        return 1;
+        TEST_error("usage: verify_extra_test roots.pem untrusted.pem bad.pem\n");
+        return EXIT_FAILURE;
     }
 
-    if (!test_alt_chains_cert_forgery(argv[1], argv[2], argv[3])) {
-        fprintf(stderr, "Test alt chains cert forgery failed\n");
-        return 1;
-    }
-
-#ifndef OPENSSL_NO_CRYPTO_MDEBUG
-    if (CRYPTO_mem_leaks_fp(stderr) <= 0)
-        return 1;
-#endif
-
-    printf("PASS\n");
-    return 0;
+    if (!TEST_true(test_alt_chains_cert_forgery(argv[1], argv[2], argv[3])))
+        return EXIT_FAILURE;
+    return EXIT_SUCCESS;
 }

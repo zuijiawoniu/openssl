@@ -97,7 +97,7 @@ static unsigned long (*getauxval) (unsigned long) = NULL;
 
 void OPENSSL_cpuid_setup(void)
 {
-    char *e;
+    const char *e;
     struct sigaction ill_oact, ill_act;
     sigset_t oset;
     static int trigger = 0;
@@ -110,6 +110,24 @@ void OPENSSL_cpuid_setup(void)
         OPENSSL_armcap_P = (unsigned int)strtoul(e, NULL, 0);
         return;
     }
+
+# if defined(__APPLE__) && !defined(__aarch64__)
+    /*
+     * Capability probing by catching SIGILL appears to be problematic
+     * on iOS. But since Apple universe is "monocultural", it's actually
+     * possible to simply set pre-defined processor capability mask.
+     */
+    if (1) {
+        OPENSSL_armcap_P = ARMV7_NEON;
+        return;
+    }
+    /*
+     * One could do same even for __aarch64__ iOS builds. It's not done
+     * exclusively for reasons of keeping code unified across platforms.
+     * Unified code works because it never triggers SIGILL on Apple
+     * devices...
+     */
+# endif
 
     sigfillset(&all_masked);
     sigdelset(&all_masked, SIGILL);

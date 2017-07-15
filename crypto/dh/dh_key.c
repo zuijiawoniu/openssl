@@ -56,9 +56,21 @@ static DH_METHOD dh_ossl = {
     NULL
 };
 
+static const DH_METHOD *default_DH_method = &dh_ossl;
+
 const DH_METHOD *DH_OpenSSL(void)
 {
     return &dh_ossl;
+}
+
+void DH_set_default_method(const DH_METHOD *meth)
+{
+    default_DH_method = meth;
+}
+
+const DH_METHOD *DH_get_default_method(void)
+{
+    return default_DH_method;
 }
 
 static int generate_key(DH *dh)
@@ -159,6 +171,8 @@ static int compute_key(unsigned char *key, const BIGNUM *pub_key, DH *dh)
         goto err;
     BN_CTX_start(ctx);
     tmp = BN_CTX_get(ctx);
+    if (tmp == NULL)
+        goto err;
 
     if (dh->priv_key == NULL) {
         DHerr(DH_F_COMPUTE_KEY, DH_R_NO_PRIVATE_VALUE);

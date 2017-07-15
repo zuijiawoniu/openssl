@@ -63,10 +63,12 @@ OPENSSL_rdtsc:
 .type	OPENSSL_ia32_cpuid,\@function,1
 .align	16
 OPENSSL_ia32_cpuid:
+.cfi_startproc
 	mov	%rbx,%r8		# save %rbx
+.cfi_register	%rbx,%r8
 
 	xor	%eax,%eax
-	mov	%eax,8(%rdi)		# clear 3rd word
+	mov	%eax,8(%rdi)		# clear extended feature flags
 	cpuid
 	mov	%eax,%r11d		# max value for standard query level
 
@@ -134,14 +136,6 @@ OPENSSL_ia32_cpuid:
 	shr	\$14,%r10d
 	and	\$0xfff,%r10d		# number of cores -1 per L1D
 
-	cmp	\$7,%r11d
-	jb	.Lnocacheinfo
-
-	mov	\$7,%eax
-	xor	%ecx,%ecx
-	cpuid
-	mov	%ebx,8(%rdi)
-
 .Lnocacheinfo:
 	mov	\$1,%eax
 	cpuid
@@ -171,23 +165,42 @@ OPENSSL_ia32_cpuid:
 	or	%ecx,%r9d		# merge AMD XOP flag
 
 	mov	%edx,%r10d		# %r9d:%r10d is copy of %ecx:%edx
+
+	cmp	\$7,%r11d
+	jb	.Lno_extended_info
+	mov	\$7,%eax
+	xor	%ecx,%ecx
+	cpuid
+	mov	%ebx,8(%rdi)		# save extended feature flags
+.Lno_extended_info:
+
 	bt	\$27,%r9d		# check OSXSAVE bit
 	jnc	.Lclear_avx
 	xor	%ecx,%ecx		# XCR0
 	.byte	0x0f,0x01,0xd0		# xgetbv
+	and	\$0xe6,%eax		# isolate XMM, YMM and ZMM state support
+	cmp	\$0xe6,%eax
+	je	.Ldone
+	andl	\$0xfffeffff,8(%rdi)	# clear AVX512F, ~(1<<16)
+					# note that we don't touch other AVX512
+					# extensions, because they can be used
+					# with YMM (without opmasking though)
 	and	\$6,%eax		# isolate XMM and YMM state support
 	cmp	\$6,%eax
 	je	.Ldone
 .Lclear_avx:
 	mov	\$0xefffe7ff,%eax	# ~(1<<28|1<<12|1<<11)
 	and	%eax,%r9d		# clear AVX, FMA and AMD XOP bits
-	andl	\$0xffffffdf,8(%rdi)	# cleax AVX2, ~(1<<5)
+	mov	\$0x3fdeffdf,%eax	# ~(1<<31|1<<30|1<<21|1<<16|1<<5)
+	and	%eax,8(%rdi)		# cleax AVX2 and AVX512* bits
 .Ldone:
 	shl	\$32,%r9
 	mov	%r10d,%eax
 	mov	%r8,%rbx		# restore %rbx
+.cfi_restore	%rbx
 	or	%r9,%rax
 	ret
+.cfi_endproc
 .size	OPENSSL_ia32_cpuid,.-OPENSSL_ia32_cpuid
 
 .globl  OPENSSL_cleanse

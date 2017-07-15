@@ -1,16 +1,11 @@
 /*
  * Copyright 2002-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
- */
-
-/* ====================================================================
- * Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
- * Portions originally developed by SUN MICROSYSTEMS, INC., and
- * contributed to the OpenSSL project.
  */
 
 #include <internal/cryptlib.h>
@@ -49,7 +44,7 @@ void EC_KEY_free(EC_KEY *r)
     if (r == NULL)
         return;
 
-    CRYPTO_atomic_add(&r->references, -1, &i, r->lock);
+    CRYPTO_DOWN_REF(&r->references, &i, r->lock);
     REF_PRINT_COUNT("EC_KEY", r);
     if (i > 0)
         return;
@@ -169,12 +164,17 @@ int EC_KEY_up_ref(EC_KEY *r)
 {
     int i;
 
-    if (CRYPTO_atomic_add(&r->references, 1, &i, r->lock) <= 0)
+    if (CRYPTO_UP_REF(&r->references, &i, r->lock) <= 0)
         return 0;
 
     REF_PRINT_COUNT("EC_KEY", r);
     REF_ASSERT_ISNT(i < 2);
     return ((i > 1) ? 1 : 0);
+}
+
+ENGINE *EC_KEY_get0_engine(const EC_KEY *eckey)
+{
+    return eckey->engine;
 }
 
 int EC_KEY_generate_key(EC_KEY *eckey)

@@ -30,15 +30,21 @@ static char b64table[] =
 /*
  * Convert a base64 string into raw byte array representation.
  */
-static int t_fromb64(unsigned char *a, const char *src)
+static int t_fromb64(unsigned char *a, size_t alen, const char *src)
 {
     char *loc;
     int i, j;
     int size;
 
+    if (alen == 0 || alen > INT_MAX)
+        return -1;
+
     while (*src && (*src == ' ' || *src == '\t' || *src == '\n'))
         ++src;
     size = strlen(src);
+    if (size < 0 || size >= (int)alen)
+        return -1;
+
     i = 0;
     while (i < size) {
         loc = strchr(b64table, src[i]);
@@ -74,7 +80,7 @@ static int t_fromb64(unsigned char *a, const char *src)
         if (--i < 0)
             break;
     }
-    while (a[j] == 0 && j <= size)
+    while (j <= size && a[j] == 0)
         ++j;
     i = 0;
     while (j <= size)
@@ -181,13 +187,25 @@ static int SRP_user_pwd_set_sv(SRP_user_pwd *vinfo, const char *s,
     unsigned char tmp[MAX_LEN];
     int len;
 
-    if (strlen(s) > MAX_LEN || strlen(v) > MAX_LEN)
+    vinfo->v = NULL;
+    vinfo->s = NULL;
+
+    len = t_fromb64(tmp, sizeof(tmp), v);
+    if (len < 0)
         return 0;
-    len = t_fromb64(tmp, v);
     if (NULL == (vinfo->v = BN_bin2bn(tmp, len, NULL)))
         return 0;
-    len = t_fromb64(tmp, s);
-    return ((vinfo->s = BN_bin2bn(tmp, len, NULL)) != NULL);
+    len = t_fromb64(tmp, sizeof(tmp), s);
+    if (len < 0)
+        goto err;
+    vinfo->s = BN_bin2bn(tmp, len, NULL);
+    if (vinfo->s == NULL)
+        goto err;
+    return 1;
+ err:
+    BN_free(vinfo->v);
+    vinfo->v = NULL;
+    return 0;
 }
 
 static int SRP_user_pwd_set_sv_BN(SRP_user_pwd *vinfo, BIGNUM *s, BIGNUM *v)
@@ -257,10 +275,13 @@ static SRP_gN_cache *SRP_gN_new_init(const char *ch)
     if (newgN == NULL)
         return NULL;
 
+    len = t_fromb64(tmp, sizeof(tmp), ch);
+    if (len < 0)
+        goto err;
+
     if ((newgN->b64_bn = OPENSSL_strdup(ch)) == NULL)
         goto err;
 
-    len = t_fromb64(tmp, ch);
     if ((newgN->bn = BN_bin2bn(tmp, len, NULL)))
         return newgN;
 
@@ -453,7 +474,7 @@ static SRP_user_pwd *find_user(SRP_VBASE *vb, char *username)
     return NULL;
 }
 
- #if OPENSSL_API_COMPAT < 0x10100000L
+# if OPENSSL_API_COMPAT < 0x10100000L
 /*
  * DEPRECATED: use SRP_VBASE_get1_by_user instead.
  * This method ignores the configured seed and fails for an unknown user.
@@ -464,7 +485,7 @@ SRP_user_pwd *SRP_VBASE_get_by_user(SRP_VBASE *vb, char *username)
 {
     return find_user(vb, username);
 }
-#endif
+# endif
 
 /*
  * Ownership of the returned pointer is released to the caller.
@@ -539,11 +560,11 @@ char *SRP_create_verifier(const char *user, const char *pass, char **salt,
         goto err;
 
     if (N) {
-        if ((len = t_fromb64(tmp, N)) == 0)
+        if ((len = t_fromb64(tmp, sizeof(tmp), N)) <= 0)
             goto err;
         N_bn_alloc = BN_bin2bn(tmp, len, NULL);
         N_bn = N_bn_alloc;
-        if ((len = t_fromb64(tmp, g)) == 0)
+        if ((len = t_fromb64(tmp, sizeof(tmp) ,g)) <= 0)
             goto err;
         g_bn_alloc = BN_bin2bn(tmp, len, NULL);
         g_bn = g_bn_alloc;
@@ -563,7 +584,7 @@ char *SRP_create_verifier(const char *user, const char *pass, char **salt,
 
         s = BN_bin2bn(tmp2, SRP_RANDOM_SALT_LEN, NULL);
     } else {
-        if ((len = t_fromb64(tmp2, *salt)) == 0)
+        if ((len = t_fromb64(tmp2, sizeof(tmp2), *salt)) <= 0)
             goto err;
         s = BN_bin2bn(tmp2, len, NULL);
     }

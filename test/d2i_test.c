@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -41,18 +41,7 @@ typedef struct {
 
 static expected_error_t expected_error = ASN1_UNKNOWN;
 
-typedef struct d2i_test_fixture {
-    const char *test_case_name;
-} D2I_TEST_FIXTURE;
-
-static D2I_TEST_FIXTURE set_up(const char *const test_case_name)
-{
-    D2I_TEST_FIXTURE fixture;
-    fixture.test_case_name = test_case_name;
-    return fixture;
-}
-
-static int execute_test(D2I_TEST_FIXTURE fixture)
+static int test_bad_asn1()
 {
     BIO *bio = NULL;
     ASN1_VALUE *value = NULL;
@@ -63,12 +52,12 @@ static int execute_test(D2I_TEST_FIXTURE fixture)
     int derlen;
     int len;
 
-    if ((bio = BIO_new_file(test_file, "r")) == NULL)
+    bio = BIO_new_file(test_file, "r");
+    if (!TEST_ptr(bio))
         return 0;
 
     if (expected_error == ASN1_BIO) {
-        value = ASN1_item_d2i_bio(item_type, bio, NULL);
-        if (value == NULL)
+        if (TEST_ptr_null(ASN1_item_d2i_bio(item_type, bio, NULL)))
             ret = 1;
         goto err;
     }
@@ -79,12 +68,12 @@ static int execute_test(D2I_TEST_FIXTURE fixture)
      * decoder is called.
      */
     len = BIO_read(bio, buf, sizeof buf);
-    if (len < 0)
+    if (!TEST_int_ge(len, 0))
         goto err;
 
     value = ASN1_item_d2i(NULL, &buf_ptr, len, item_type);
     if (value == NULL) {
-        if (expected_error == ASN1_DECODE)
+        if (TEST_int_eq(expected_error, ASN1_DECODE))
             ret = 1;
         goto err;
     }
@@ -92,23 +81,24 @@ static int execute_test(D2I_TEST_FIXTURE fixture)
     derlen = ASN1_item_i2d(value, &der, item_type);
 
     if (der == NULL || derlen < 0) {
-        if (expected_error == ASN1_ENCODE)
+        if (TEST_int_eq(expected_error, ASN1_ENCODE))
             ret = 1;
         goto err;
     }
 
     if (derlen != len || memcmp(der, buf, derlen) != 0) {
-        if (expected_error == ASN1_COMPARE)
+        if (TEST_int_eq(expected_error, ASN1_COMPARE))
             ret = 1;
         goto err;
     }
 
-    if (expected_error == ASN1_OK)
+    if (TEST_int_eq(expected_error, ASN1_OK))
         ret = 1;
 
  err:
     /* Don't indicate success for memory allocation errors */
-    if (ret == 1 && ERR_GET_REASON(ERR_peek_error()) == ERR_R_MALLOC_FAILURE)
+    if (ret == 1
+        && !TEST_false(ERR_GET_REASON(ERR_peek_error()) == ERR_R_MALLOC_FAILURE))
         ret = 0;
     BIO_free(bio);
     OPENSSL_free(der);
@@ -116,40 +106,16 @@ static int execute_test(D2I_TEST_FIXTURE fixture)
     return ret;
 }
 
-static void tear_down(D2I_TEST_FIXTURE fixture)
-{
-    ERR_print_errors_fp(stderr);
-}
-
-#define SETUP_D2I_TEST_FIXTURE() \
-    SETUP_TEST_FIXTURE(D2I_TEST_FIXTURE, set_up)
-
-#define EXECUTE_D2I_TEST() \
-    EXECUTE_TEST(execute_test, tear_down)
-
-static int test_bad_asn1()
-{
-    SETUP_D2I_TEST_FIXTURE();
-    EXECUTE_D2I_TEST();
-}
-
 /*
  * Usage: d2i_test <type> <file>, e.g.
  * d2i_test generalname bad_generalname.der
  */
-int main(int argc, char **argv)
+int test_main(int argc, char *argv[])
 {
-    int result = 0;
     const char *test_type_name;
     const char *expected_error_string;
 
     size_t i;
-    static ASN1_ITEM_EXP *items[] = {
-        ASN1_ITEM_ref(ASN1_ANY),
-        ASN1_ITEM_ref(X509),
-        ASN1_ITEM_ref(GENERAL_NAME),
-        ASN1_ITEM_ref(ASN1_INTEGER)
-    };
 
     static error_enum expected_errors[] = {
         {"OK", ASN1_OK},
@@ -159,9 +125,8 @@ int main(int argc, char **argv)
         {"compare", ASN1_COMPARE}
     };
 
-    if (argc != 4) {
-        fprintf(stderr,
-                "Usage: d2i_test item_name expected_error file.der\n");
+    if (!TEST_int_eq(argc, 4)) {
+        fprintf(stderr, "Usage: d2i_test item_name expected_error file.der\n");
         return 1;
     }
 
@@ -169,19 +134,17 @@ int main(int argc, char **argv)
     expected_error_string = argv[2];
     test_file = argv[3];
 
-    for (i = 0; i < OSSL_NELEM(items); i++) {
-        const ASN1_ITEM *it = ASN1_ITEM_ptr(items[i]);
-        if (strcmp(test_type_name, it->sname) == 0) {
-            item_type = it;
-            break;
-        }
-    }
+    item_type = ASN1_ITEM_lookup(test_type_name);
+
     if (item_type == NULL) {
-        fprintf(stderr, "Unknown type %s\n", test_type_name);
-        fprintf(stderr, "Supported types:\n");
-        for (i = 0; i < OSSL_NELEM(items); i++) {
-            const ASN1_ITEM *it = ASN1_ITEM_ptr(items[i]);
-            fprintf(stderr, "\t%s\n", it->sname);
+        TEST_error("Unknown type %s", test_type_name);
+        TEST_note("Supported types:");
+        for (i = 0;; i++) {
+            const ASN1_ITEM *it = ASN1_ITEM_get(i);
+
+            if (it == NULL)
+                break;
+            TEST_note("\t%s", it->sname);
         }
         return 1;
     }
@@ -194,13 +157,11 @@ int main(int argc, char **argv)
     }
 
     if (expected_error == ASN1_UNKNOWN) {
-        fprintf(stderr, "Unknown expected error %s\n", expected_error_string);
+        TEST_error("Unknown expected error %s\n", expected_error_string);
         return 1;
     }
 
     ADD_TEST(test_bad_asn1);
 
-    result = run_tests(argv[0]);
-
-    return result;
+    return run_tests(argv[0]);
 }

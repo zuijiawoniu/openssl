@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2000-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -35,7 +35,7 @@ typedef enum OPTION_choice {
     OPT_PUBIN, OPT_CERTIN, OPT_INKEY, OPT_PASSIN, OPT_KEYFORM
 } OPTION_CHOICE;
 
-OPTIONS rsautl_options[] = {
+const OPTIONS rsautl_options[] = {
     {"help", OPT_HELP, '-', "Display this summary"},
     {"in", OPT_IN, '<', "Input file"},
     {"out", OPT_OUT, '>', "Output file"},
@@ -190,14 +190,13 @@ int rsautl_main(int argc, char **argv)
         break;
     }
 
-    if (!pkey) {
+    if (pkey == NULL)
         return 1;
-    }
 
     rsa = EVP_PKEY_get1_RSA(pkey);
     EVP_PKEY_free(pkey);
 
-    if (!rsa) {
+    if (rsa == NULL) {
         BIO_printf(bio_err, "Error getting RSA key\n");
         ERR_print_errors(bio_err);
         goto end;
@@ -261,12 +260,14 @@ int rsautl_main(int argc, char **argv)
         if (!ASN1_parse_dump(out, rsa_out, rsa_outlen, 1, -1)) {
             ERR_print_errors(bio_err);
         }
-    } else if (hexdump)
+    } else if (hexdump) {
         BIO_dump(out, (char *)rsa_out, rsa_outlen);
-    else
+    } else {
         BIO_write(out, rsa_out, rsa_outlen);
+    }
  end:
     RSA_free(rsa);
+    release_engine(e);
     BIO_free(in);
     BIO_free_all(out);
     OPENSSL_free(rsa_in);

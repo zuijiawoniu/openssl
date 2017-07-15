@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -50,10 +50,7 @@ int BN_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
     }
 
     BN_CTX_start(ctx);
-    if ((r == a) || (r == p))
-        rr = BN_CTX_get(ctx);
-    else
-        rr = r;
+    rr = ((r == a) || (r == p)) ? BN_CTX_get(ctx) : r;
     v = BN_CTX_get(ctx);
     if (rr == NULL || v == NULL)
         goto err;
@@ -78,13 +75,14 @@ int BN_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
                 goto err;
         }
     }
-    if (r != rr)
-        BN_copy(r, rr);
+    if (r != rr && BN_copy(r, rr) == NULL)
+        goto err;
+
     ret = 1;
  err:
     BN_CTX_end(ctx);
     bn_check_top(r);
-    return (ret);
+    return ret;
 }
 
 int BN_mod_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, const BIGNUM *m,
@@ -132,13 +130,6 @@ int BN_mod_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, const BIGNUM *m,
 #define RECP_MUL_MOD
 
 #ifdef MONT_MUL_MOD
-    /*
-     * I have finally been able to take out this pre-condition of the top bit
-     * being set.  It was caused by an error in BN_div with negatives.  There
-     * was also another problem when for a^b%m a >= m.  eay 07-May-97
-     */
-    /* if ((m->d[m->top-1]&BN_TBIT) && BN_is_odd(m)) */
-
     if (BN_is_odd(m)) {
 # ifdef MONT_EXP_WORD
         if (a->top == 1 && !a->neg
@@ -195,7 +186,7 @@ int BN_mod_exp_recp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
     BN_CTX_start(ctx);
     aa = BN_CTX_get(ctx);
     val[0] = BN_CTX_get(ctx);
-    if (!aa || !val[0])
+    if (val[0] == NULL)
         goto err;
 
     BN_RECP_CTX_init(&recp);
@@ -336,7 +327,7 @@ int BN_mod_exp_mont(BIGNUM *rr, const BIGNUM *a, const BIGNUM *p,
     d = BN_CTX_get(ctx);
     r = BN_CTX_get(ctx);
     val[0] = BN_CTX_get(ctx);
-    if (!d || !r || !val[0])
+    if (val[0] == NULL)
         goto err;
 
     /*
@@ -1101,7 +1092,7 @@ int BN_mod_exp_mont_word(BIGNUM *rr, BN_ULONG a, const BIGNUM *p,
     int b, bits, ret = 0;
     int r_is_one;
     BN_ULONG w, next_w;
-    BIGNUM *d, *r, *t;
+    BIGNUM *r, *t;
     BIGNUM *swap_tmp;
 #define BN_MOD_MUL_WORD(r, w, m) \
                 (BN_mul_word(r, (w)) && \
@@ -1154,10 +1145,9 @@ int BN_mod_exp_mont_word(BIGNUM *rr, BN_ULONG a, const BIGNUM *p,
     }
 
     BN_CTX_start(ctx);
-    d = BN_CTX_get(ctx);
     r = BN_CTX_get(ctx);
     t = BN_CTX_get(ctx);
-    if (d == NULL || r == NULL || t == NULL)
+    if (t == NULL)
         goto err;
 
     if (in_mont != NULL)
@@ -1272,7 +1262,7 @@ int BN_mod_exp_simple(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
     BN_CTX_start(ctx);
     d = BN_CTX_get(ctx);
     val[0] = BN_CTX_get(ctx);
-    if (!d || !val[0])
+    if (val[0] == NULL)
         goto err;
 
     if (!BN_nnmod(val[0], a, m, ctx))

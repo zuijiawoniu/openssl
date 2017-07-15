@@ -77,6 +77,7 @@ static DSO_METHOD dso_meth_win32 = {
     win32_merger,
     NULL,                       /* init */
     NULL,                       /* finish */
+    NULL,                       /* pathbyaddr */
     win32_globallookup
 };
 
@@ -208,9 +209,6 @@ static struct file_st *win32_splitter(DSO *dso, const char *filename,
 
     if (!filename) {
         DSOerr(DSO_F_WIN32_SPLITTER, DSO_R_NO_FILENAME);
-        /*
-         * goto err;
-         */
         return (NULL);
     }
 
@@ -236,9 +234,6 @@ static struct file_st *win32_splitter(DSO *dso, const char *filename,
         case ':':
             if (position != IN_DEVICE) {
                 DSOerr(DSO_F_WIN32_SPLITTER, DSO_R_INCORRECT_FILE_SYNTAX);
-                /*
-                 * goto err;
-                 */
                 OPENSSL_free(result);
                 return (NULL);
             }

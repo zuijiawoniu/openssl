@@ -8,6 +8,7 @@
  */
 
 #include <openssl/crypto.h>
+#include <internal/cryptlib.h>
 
 #if !defined(OPENSSL_THREADS) || defined(CRYPTO_TDEBUG)
 
@@ -119,6 +120,11 @@ int CRYPTO_atomic_add(int *val, int amount, int *ret, CRYPTO_RWLOCK *lock)
     *ret  = *val;
 
     return 1;
+}
+
+int openssl_init_fork_handlers(void)
+{
+    return 0;
 }
 
 #endif

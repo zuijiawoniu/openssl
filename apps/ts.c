@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2006-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -86,7 +86,7 @@ typedef enum OPTION_choice {
     OPT_MD, OPT_V_ENUM
 } OPTION_CHOICE;
 
-OPTIONS ts_options[] = {
+const OPTIONS ts_options[] = {
     {"help", OPT_HELP, '-', "Display this summary"},
     {"config", OPT_CONFIG, '<', "Configuration file"},
     {"section", OPT_SECTION, 's', "Section to use within config file"},
@@ -106,8 +106,8 @@ OPTIONS ts_options[] = {
     {"reply", OPT_REPLY, '-', "Generate a TS reply"},
     {"queryfile", OPT_QUERYFILE, '<', "File containing a TS query"},
     {"passin", OPT_PASSIN, 's', "Input file pass phrase source"},
-    {"inkey", OPT_INKEY, '<', "File with private key for reply"},
-    {"signer", OPT_SIGNER, 's'},
+    {"inkey", OPT_INKEY, 's', "File with private key for reply"},
+    {"signer", OPT_SIGNER, 's', "Signer certificate file"},
     {"chain", OPT_CHAIN, '<', "File with signer CA chain"},
     {"verify", OPT_VERIFY, '-', "Verify a TS response"},
     {"CApath", OPT_CAPATH, '/', "Path to trusted CA files"},
@@ -296,19 +296,14 @@ int ts_main(int argc, char **argv)
         goto end;
 
     /* Check parameter consistency and execute the appropriate function. */
-    switch (mode) {
-    default:
-    case OPT_ERR:
-        goto opthelp;
-    case OPT_QUERY:
+    if (mode == OPT_QUERY) {
         if (vpmtouched)
             goto opthelp;
         if ((data != NULL) && (digest != NULL))
             goto opthelp;
         ret = !query_command(data, digest, md, policy, no_nonce, cert,
                              in, out, text);
-        break;
-    case OPT_REPLY:
+    } else if (mode == OPT_REPLY) {
         if (vpmtouched)
             goto opthelp;
         if ((in != NULL) && (queryfile != NULL))
@@ -320,13 +315,15 @@ int ts_main(int argc, char **argv)
         ret = !reply_command(conf, section, engine, queryfile,
                              password, inkey, md, signer, chain, policy,
                              in, token_in, out, token_out, text);
-        break;
-    case OPT_VERIFY:
+
+    } else if (mode == OPT_VERIFY) {
         if ((in == NULL) || !EXACTLY_ONE(queryfile, data, digest))
             goto opthelp;
         ret = !verify_command(data, digest, queryfile, in, token_in,
                               CApath, CAfile, untrusted,
                               vpmtouched ? vpm : NULL);
+    } else {
+        goto opthelp;
     }
 
  end:
@@ -501,7 +498,7 @@ static int create_digest(BIO *input, const char *digest, const EVP_MD *md,
     if (md_value_len < 0)
         return 0;
 
-    if (input) {
+    if (input != NULL) {
         unsigned char buffer[4096];
         int length;
 
@@ -593,7 +590,7 @@ static int reply_command(CONF *conf, const char *section, const char *engine,
     } else {
         response = create_response(conf, section, engine, queryfile,
                                    passin, inkey, md, signer, chain, policy);
-        if (response)
+        if (response != NULL)
             BIO_printf(bio_err, "Response has been generated.\n");
         else
             BIO_printf(bio_err, "Response is not generated.\n");
@@ -712,6 +709,8 @@ static TS_RESP *create_response(CONF *conf, const char *section, const char *eng
             goto end;
     }
 
+    if (!TS_CONF_set_ess_cert_id_digest(conf, section, resp_ctx))
+        goto end;
     if (!TS_CONF_set_def_policy(conf, section, policy, resp_ctx))
         goto end;
     if (!TS_CONF_set_policies(conf, section, resp_ctx))
@@ -747,13 +746,14 @@ static ASN1_INTEGER *serial_cb(TS_RESP_CTX *ctx, void *data)
     const char *serial_file = (const char *)data;
     ASN1_INTEGER *serial = next_serial(serial_file);
 
-    if (!serial) {
+    if (serial == NULL) {
         TS_RESP_CTX_set_status_info(ctx, TS_STATUS_REJECTION,
                                     "Error during serial number "
                                     "generation.");
         TS_RESP_CTX_add_failure_info(ctx, TS_INFO_ADD_INFO_NOT_AVAILABLE);
-    } else
+    } else {
         save_ts_serial(serial_file, serial);
+    }
 
     return serial;
 }
@@ -890,9 +890,15 @@ static TS_VERIFY_CTX *create_verify_ctx(const char *data, const char *digest,
             goto err;
         f = TS_VFY_VERSION | TS_VFY_SIGNER;
         if (data != NULL) {
+            BIO *out = NULL;
+
             f |= TS_VFY_DATA;
-            if (TS_VERIFY_CTX_set_data(ctx, BIO_new_file(data, "rb")) == NULL)
+            if ((out = BIO_new_file(data, "rb")) == NULL)
                 goto err;
+            if (TS_VERIFY_CTX_set_data(ctx, out) == NULL) {
+                BIO_free_all(out);
+                goto err;
+            }
         } else if (digest != NULL) {
             long imprint_len;
             unsigned char *hexstr = OPENSSL_hexstr2buf(digest, &imprint_len);
@@ -910,8 +916,9 @@ static TS_VERIFY_CTX *create_verify_ctx(const char *data, const char *digest,
             goto err;
         if ((ctx = TS_REQ_to_TS_VERIFY_CTX(request, NULL)) == NULL)
             goto err;
-    } else
+    } else {
         return NULL;
+    }
 
     /* Add the signature verification flag and arguments. */
     TS_VERIFY_CTX_add_flags(ctx, f | TS_VFY_SIGNATURE);

@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -23,12 +23,9 @@ char *BN_bn2hex(const BIGNUM *a)
     char *buf;
     char *p;
 
-    if (a->neg && BN_is_zero(a)) {
-        /* "-0" == 3 bytes including NULL terminator */
-        buf = OPENSSL_malloc(3);
-    } else {
-        buf = OPENSSL_malloc(a->top * BN_BYTES * 2 + 2);
-    }
+    if (BN_is_zero(a))
+        return OPENSSL_strdup("0");
+    buf = OPENSSL_malloc(a->top * BN_BYTES * 2 + 2);
     if (buf == NULL) {
         BNerr(BN_F_BN_BN2HEX, ERR_R_MALLOC_FAILURE);
         goto err;
@@ -36,8 +33,6 @@ char *BN_bn2hex(const BIGNUM *a)
     p = buf;
     if (a->neg)
         *(p++) = '-';
-    if (BN_is_zero(a))
-        *(p++) = '0';
     for (i = a->top - 1; i >= 0; i--) {
         for (j = BN_BITS2 - 8; j >= 0; j -= 8) {
             /* strip leading zeros */
@@ -51,13 +46,13 @@ char *BN_bn2hex(const BIGNUM *a)
     }
     *p = '\0';
  err:
-    return (buf);
+    return buf;
 }
 
 /* Must 'OPENSSL_free' the returned data */
 char *BN_bn2dec(const BIGNUM *a)
 {
-    int i = 0, num, ok = 0;
+    int i = 0, num, ok = 0, n, tbytes;
     char *buf = NULL;
     char *p;
     BIGNUM *t = NULL;
@@ -72,9 +67,10 @@ char *BN_bn2dec(const BIGNUM *a)
      */
     i = BN_num_bits(a) * 3;
     num = (i / 10 + i / 1000 + 1) + 1;
+    tbytes = num + 3;   /* negative and terminator and one spare? */
     bn_data_num = num / BN_DEC_NUM + 1;
     bn_data = OPENSSL_malloc(bn_data_num * sizeof(BN_ULONG));
-    buf = OPENSSL_malloc(num + 3);
+    buf = OPENSSL_malloc(tbytes);
     if ((buf == NULL) || (bn_data == NULL)) {
         BNerr(BN_F_BN_BN2DEC, ERR_R_MALLOC_FAILURE);
         goto err;
@@ -82,7 +78,6 @@ char *BN_bn2dec(const BIGNUM *a)
     if ((t = BN_dup(a)) == NULL)
         goto err;
 
-#define BUF_REMAIN (num+3 - (size_t)(p - buf))
     p = buf;
     lp = bn_data;
     if (BN_is_zero(t)) {
@@ -106,14 +101,16 @@ char *BN_bn2dec(const BIGNUM *a)
          * the last one needs truncation. The blocks need to be reversed in
          * order.
          */
-        BIO_snprintf(p, BUF_REMAIN, BN_DEC_FMT1, *lp);
-        while (*p)
-            p++;
+        n = BIO_snprintf(p, tbytes - (size_t)(p - buf), BN_DEC_FMT1, *lp);
+        if (n < 0)
+            goto err;
+        p += n;
         while (lp != bn_data) {
             lp--;
-            BIO_snprintf(p, BUF_REMAIN, BN_DEC_FMT2, *lp);
-            while (*p)
-                p++;
+            n = BIO_snprintf(p, tbytes - (size_t)(p - buf), BN_DEC_FMT2, *lp);
+            if (n < 0)
+                goto err;
+            p += n;
         }
     }
     ok = 1;
@@ -134,7 +131,7 @@ int BN_hex2bn(BIGNUM **bn, const char *a)
     int num;
 
     if ((a == NULL) || (*a == '\0'))
-        return (0);
+        return 0;
 
     if (*a == '-') {
         neg = 1;
@@ -149,12 +146,12 @@ int BN_hex2bn(BIGNUM **bn, const char *a)
 
     num = i + neg;
     if (bn == NULL)
-        return (num);
+        return num;
 
     /* a is the start of the hex digits, and it is 'i' long */
     if (*bn == NULL) {
         if ((ret = BN_new()) == NULL)
-            return (0);
+            return 0;
     } else {
         ret = *bn;
         BN_zero(ret);
@@ -186,15 +183,17 @@ int BN_hex2bn(BIGNUM **bn, const char *a)
     }
     ret->top = h;
     bn_correct_top(ret);
-    ret->neg = neg;
 
     *bn = ret;
     bn_check_top(ret);
-    return (num);
+    /* Don't set the negative flag if it's zero. */
+    if (ret->top != 0)
+        ret->neg = neg;
+    return num;
  err:
     if (*bn == NULL)
         BN_free(ret);
-    return (0);
+    return 0;
 }
 
 int BN_dec2bn(BIGNUM **bn, const char *a)
@@ -205,7 +204,7 @@ int BN_dec2bn(BIGNUM **bn, const char *a)
     int num;
 
     if ((a == NULL) || (*a == '\0'))
-        return (0);
+        return 0;
     if (*a == '-') {
         neg = 1;
         a++;
@@ -219,7 +218,7 @@ int BN_dec2bn(BIGNUM **bn, const char *a)
 
     num = i + neg;
     if (bn == NULL)
-        return (num);
+        return num;
 
     /*
      * a is the start of the digits, and it is 'i' long. We chop it into
@@ -227,7 +226,7 @@ int BN_dec2bn(BIGNUM **bn, const char *a)
      */
     if (*bn == NULL) {
         if ((ret = BN_new()) == NULL)
-            return (0);
+            return 0;
     } else {
         ret = *bn;
         BN_zero(ret);
@@ -241,7 +240,7 @@ int BN_dec2bn(BIGNUM **bn, const char *a)
     if (j == BN_DEC_NUM)
         j = 0;
     l = 0;
-    while (*a) {
+    while (--i >= 0) {
         l *= 10;
         l += *a - '0';
         a++;
@@ -253,21 +252,24 @@ int BN_dec2bn(BIGNUM **bn, const char *a)
             j = 0;
         }
     }
-    ret->neg = neg;
 
     bn_correct_top(ret);
     *bn = ret;
     bn_check_top(ret);
-    return (num);
+    /* Don't set the negative flag if it's zero. */
+    if (ret->top != 0)
+        ret->neg = neg;
+    return num;
  err:
     if (*bn == NULL)
         BN_free(ret);
-    return (0);
+    return 0;
 }
 
 int BN_asc2bn(BIGNUM **bn, const char *a)
 {
     const char *p = a;
+
     if (*p == '-')
         p++;
 
@@ -278,7 +280,8 @@ int BN_asc2bn(BIGNUM **bn, const char *a)
         if (!BN_dec2bn(bn, p))
             return 0;
     }
-    if (*a == '-')
+    /* Don't set the negative flag if it's zero. */
+    if (*a == '-' && (*bn)->top != 0)
         (*bn)->neg = 1;
     return 1;
 }
@@ -290,11 +293,11 @@ int BN_print_fp(FILE *fp, const BIGNUM *a)
     int ret;
 
     if ((b = BIO_new(BIO_s_file())) == NULL)
-        return (0);
+        return 0;
     BIO_set_fp(b, fp, BIO_NOCLOSE);
     ret = BN_print(b, a);
     BIO_free(b);
-    return (ret);
+    return ret;
 }
 # endif
 
@@ -320,7 +323,7 @@ int BN_print(BIO *bp, const BIGNUM *a)
     }
     ret = 1;
  end:
-    return (ret);
+    return ret;
 }
 
 char *BN_options(void)
@@ -331,12 +334,12 @@ char *BN_options(void)
     if (!init) {
         init++;
 #ifdef BN_LLONG
-        BIO_snprintf(data, sizeof data, "bn(%d,%d)",
-                     (int)sizeof(BN_ULLONG) * 8, (int)sizeof(BN_ULONG) * 8);
+        BIO_snprintf(data, sizeof(data), "bn(%zu,%zu)",
+                     sizeof(BN_ULLONG) * 8, sizeof(BN_ULONG) * 8);
 #else
-        BIO_snprintf(data, sizeof data, "bn(%d,%d)",
-                     (int)sizeof(BN_ULONG) * 8, (int)sizeof(BN_ULONG) * 8);
+        BIO_snprintf(data, sizeof(data), "bn(%zu,%zu)",
+                     sizeof(BN_ULONG) * 8, sizeof(BN_ULONG) * 8);
 #endif
     }
-    return (data);
+    return data;
 }

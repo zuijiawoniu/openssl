@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -21,9 +21,6 @@
 # include <openssl/engine.h>
 #endif
 #include <openssl/err.h>
-#ifdef OPENSSL_FIPS
-# include <openssl/fips.h>
-#endif
 #define USE_SOCKETS /* needed for the _O_BINARY defs in the MS world */
 #include "s_apps.h"
 /* Needed to get the other O_xxx flags. */
@@ -58,7 +55,6 @@ static void list_type(FUNC_TYPE ft);
 static void list_disabled(void);
 char *default_config_file = NULL;
 
-static CONF *config = NULL;
 BIO *bio_in = NULL;
 BIO *bio_out = NULL;
 BIO *bio_err = NULL;
@@ -74,18 +70,14 @@ static int apps_startup()
                              | OPENSSL_INIT_LOAD_CONFIG, NULL))
         return 0;
 
-#ifndef OPENSSL_NO_UI
     setup_ui_method();
-#endif
 
     return 1;
 }
 
 static void apps_shutdown()
 {
-#ifndef OPENSSL_NO_UI
     destroy_ui_method();
-#endif
 }
 
 static char *make_config_name()
@@ -144,19 +136,17 @@ int main(int argc, char *argv[])
     CRYPTO_mem_ctrl(CRYPTO_MEM_CHECK_ON);
 
     if (getenv("OPENSSL_FIPS")) {
-#ifdef OPENSSL_FIPS
-        if (!FIPS_mode_set(1)) {
-            ERR_print_errors(bio_err);
-            return 1;
-        }
-#else
         BIO_printf(bio_err, "FIPS mode not supported.\n");
         return 1;
-#endif
     }
 
-    if (!apps_startup())
+    if (!apps_startup()) {
+        BIO_printf(bio_err,
+                   "FATAL: Startup failure (dev note: apps_startup() failed)\n");
+        ERR_print_errors(bio_err);
+        ret = 1;
         goto end;
+    }
 
     prog = prog_init();
     pname = opt_progname(argv[0]);
@@ -248,8 +238,6 @@ int main(int argc, char *argv[])
  end:
     OPENSSL_free(copied_argv);
     OPENSSL_free(default_config_file);
-    NCONF_free(config);
-    config = NULL;
     lh_FUNCTION_free(prog);
     OPENSSL_free(arg.argv);
 
@@ -264,19 +252,19 @@ int main(int argc, char *argv[])
     EXIT(ret);
 }
 
-OPTIONS exit_options[] = {
+const OPTIONS exit_options[] = {
     {NULL}
 };
 
 static void list_cipher_fn(const EVP_CIPHER *c,
                            const char *from, const char *to, void *arg)
 {
-    if (c)
+    if (c != NULL) {
         BIO_printf(arg, "%s\n", EVP_CIPHER_name(c));
-    else {
-        if (!from)
+    } else {
+        if (from == NULL)
             from = "<undefined>";
-        if (!to)
+        if (to == NULL)
             to = "<undefined>";
         BIO_printf(arg, "%s => %s\n", from, to);
     }
@@ -285,26 +273,44 @@ static void list_cipher_fn(const EVP_CIPHER *c,
 static void list_md_fn(const EVP_MD *m,
                        const char *from, const char *to, void *arg)
 {
-    if (m)
+    if (m != NULL) {
         BIO_printf(arg, "%s\n", EVP_MD_name(m));
-    else {
-        if (!from)
+    } else {
+        if (from == NULL)
             from = "<undefined>";
-        if (!to)
+        if (to == NULL)
             to = "<undefined>";
         BIO_printf((BIO *)arg, "%s => %s\n", from, to);
     }
 }
+
+static void list_missing_help(void)
+{
+    const FUNCTION *fp;
+    const OPTIONS *o;
+
+    for (fp = functions; fp->name != NULL; fp++) {
+        if ((o = fp->help) == NULL) {
+            BIO_printf(bio_out, "%s *\n", fp->name);
+            continue;
+        }
+        for ( ; o->name != NULL; o++) {
+            if (o->helpstr == NULL)
+                BIO_printf(bio_out, "%s %s\n", fp->name, o->name);
+        }
+    }
+}
+
 
 /* Unified enum for help and list commands. */
 typedef enum HELPLIST_CHOICE {
     OPT_ERR = -1, OPT_EOF = 0, OPT_HELP,
     OPT_COMMANDS, OPT_DIGEST_COMMANDS,
     OPT_DIGEST_ALGORITHMS, OPT_CIPHER_COMMANDS, OPT_CIPHER_ALGORITHMS,
-    OPT_PK_ALGORITHMS, OPT_DISABLED
+    OPT_PK_ALGORITHMS, OPT_DISABLED, OPT_MISSING_HELP
 } HELPLIST_CHOICE;
 
-OPTIONS list_options[] = {
+const OPTIONS list_options[] = {
     {"help", OPT_HELP, '-', "Display this summary"},
     {"commands", OPT_COMMANDS, '-', "List of standard commands"},
     {"digest-commands", OPT_DIGEST_COMMANDS, '-',
@@ -318,6 +324,8 @@ OPTIONS list_options[] = {
      "List of public key algorithms"},
     {"disabled", OPT_DISABLED, '-',
      "List of disabled features"},
+    {"missing-help", OPT_MISSING_HELP, '-',
+     "List missing detailed help strings"},
     {NULL}
 };
 
@@ -358,6 +366,9 @@ int list_main(int argc, char **argv)
         case OPT_DISABLED:
             list_disabled();
             break;
+        case OPT_MISSING_HELP:
+            list_missing_help();
+            break;
         }
         done = 1;
     }
@@ -370,10 +381,15 @@ int list_main(int argc, char **argv)
     return 0;
 }
 
-OPTIONS help_options[] = {
-    {"help", OPT_HELP, '-', "Display this summary"},
+typedef enum HELP_CHOICE {
+    OPT_hERR = -1, OPT_hEOF = 0, OPT_hHELP
+} HELP_CHOICE;
+
+const OPTIONS help_options[] = {
+    {"help", OPT_hHELP, '-', "Display this summary"},
     {NULL}
 };
+
 
 int help_main(int argc, char **argv)
 {
@@ -381,15 +397,16 @@ int help_main(int argc, char **argv)
     int i, nl;
     FUNC_TYPE tp;
     char *prog;
-    HELPLIST_CHOICE o;
+    HELP_CHOICE o;
 
     prog = opt_init(argc, argv, help_options);
-    while ((o = opt_next()) != OPT_EOF) {
+    while ((o = opt_next()) != OPT_hEOF) {
         switch (o) {
-        default:
+        case OPT_hERR:
+        case OPT_hEOF:
             BIO_printf(bio_err, "%s: Use -help for summary.\n", prog);
             return 1;
-        case OPT_HELP:
+        case OPT_hHELP:
             opt_help(help_options);
             return 0;
         }
@@ -545,10 +562,13 @@ static int SortFnByName(const void *_f1, const void *_f2)
 static void list_disabled(void)
 {
     BIO_puts(bio_out, "Disabled algorithms:\n");
+#ifdef OPENSSL_NO_ARIA
+    BIO_puts(bio_out, "ARIA\n");
+#endif
 #ifdef OPENSSL_NO_BF
     BIO_puts(bio_out, "BF\n");
 #endif
-#ifndef OPENSSL_NO_BLAKE2
+#ifdef OPENSSL_NO_BLAKE2
     BIO_puts(bio_out, "BLAKE2\n");
 #endif
 #ifdef OPENSSL_NO_CAMELLIA

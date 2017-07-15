@@ -8,8 +8,8 @@
  */
 
 #include <stdio.h>
-#include <openssl/stack.h>
 #include "internal/cryptlib.h"
+#include <openssl/stack.h>
 #include <openssl/asn1.h>
 #include <openssl/objects.h>
 #include <openssl/evp.h>
@@ -56,8 +56,8 @@ X509_ATTRIBUTE *X509at_get_attr(const STACK_OF(X509_ATTRIBUTE) *x, int loc)
 {
     if (x == NULL || sk_X509_ATTRIBUTE_num(x) <= loc || loc < 0)
         return NULL;
-    else
-        return sk_X509_ATTRIBUTE_value(x, loc);
+
+    return sk_X509_ATTRIBUTE_value(x, loc);
 }
 
 X509_ATTRIBUTE *X509at_delete_attr(STACK_OF(X509_ATTRIBUTE) *x, int loc)

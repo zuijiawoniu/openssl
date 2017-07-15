@@ -14,21 +14,20 @@
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 
-static int bnrand(int pseudorand, BIGNUM *rnd, int bits, int top, int bottom)
+static int bnrand(int testing, BIGNUM *rnd, int bits, int top, int bottom)
 {
     unsigned char *buf = NULL;
     int ret = 0, bit, bytes, mask;
     time_t tim;
 
-    if (bits < 0 || (bits == 1 && top > 0)) {
-        BNerr(BN_F_BNRAND, BN_R_BITS_TOO_SMALL);
-        return 0;
-    }
-
     if (bits == 0) {
+        if (top != BN_RAND_TOP_ANY || bottom != BN_RAND_BOTTOM_ANY)
+            goto toosmall;
         BN_zero(rnd);
         return 1;
     }
+    if (bits < 0 || (bits == 1 && top > 0))
+        goto toosmall;
 
     bytes = (bits + 7) / 8;
     bit = (bits - 1) % 8;
@@ -47,7 +46,7 @@ static int bnrand(int pseudorand, BIGNUM *rnd, int bits, int top, int bottom)
     if (RAND_bytes(buf, bytes) <= 0)
         goto err;
 
-    if (pseudorand == 2) {
+    if (testing) {
         /*
          * generate patterns that are more likely to trigger BN library bugs
          */
@@ -88,6 +87,10 @@ static int bnrand(int pseudorand, BIGNUM *rnd, int bits, int top, int bottom)
     OPENSSL_clear_free(buf, bytes);
     bn_check_top(rnd);
     return (ret);
+
+toosmall:
+    BNerr(BN_F_BNRAND, BN_R_BITS_TOO_SMALL);
+    return 0;
 }
 
 int BN_rand(BIGNUM *rnd, int bits, int top, int bottom)
@@ -95,21 +98,14 @@ int BN_rand(BIGNUM *rnd, int bits, int top, int bottom)
     return bnrand(0, rnd, bits, top, bottom);
 }
 
-int BN_pseudo_rand(BIGNUM *rnd, int bits, int top, int bottom)
+int BN_bntest_rand(BIGNUM *rnd, int bits, int top, int bottom)
 {
     return bnrand(1, rnd, bits, top, bottom);
 }
 
-int BN_bntest_rand(BIGNUM *rnd, int bits, int top, int bottom)
-{
-    return bnrand(2, rnd, bits, top, bottom);
-}
-
 /* random number r:  0 <= r < range */
-static int bn_rand_range(int pseudo, BIGNUM *r, const BIGNUM *range)
+int BN_rand_range(BIGNUM *r, const BIGNUM *range)
 {
-    int (*bn_rand) (BIGNUM *, int, int, int) =
-        pseudo ? BN_pseudo_rand : BN_rand;
     int n;
     int count = 100;
 
@@ -130,7 +126,7 @@ static int bn_rand_range(int pseudo, BIGNUM *r, const BIGNUM *range)
          * than range
          */
         do {
-            if (!bn_rand(r, n + 1, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY))
+            if (!BN_rand(r, n + 1, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY))
                 return 0;
             /*
              * If r < 3*range, use r := r MOD range (which is either r, r -
@@ -156,7 +152,7 @@ static int bn_rand_range(int pseudo, BIGNUM *r, const BIGNUM *range)
     } else {
         do {
             /* range = 11..._2  or  range = 101..._2 */
-            if (!bn_rand(r, n, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY))
+            if (!BN_rand(r, n, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY))
                 return 0;
 
             if (!--count) {
@@ -171,14 +167,14 @@ static int bn_rand_range(int pseudo, BIGNUM *r, const BIGNUM *range)
     return 1;
 }
 
-int BN_rand_range(BIGNUM *r, const BIGNUM *range)
+int BN_pseudo_rand(BIGNUM *rnd, int bits, int top, int bottom)
 {
-    return bn_rand_range(0, r, range);
+    return BN_rand(rnd, bits, top, bottom);
 }
 
 int BN_pseudo_rand_range(BIGNUM *r, const BIGNUM *range)
 {
-    return bn_rand_range(1, r, range);
+    return BN_rand_range(r, range);
 }
 
 /*
@@ -250,5 +246,6 @@ int BN_generate_dsa_nonce(BIGNUM *out, const BIGNUM *range,
 
  err:
     OPENSSL_free(k_bytes);
+    OPENSSL_cleanse(private_bytes, sizeof(private_bytes));
     return ret;
 }

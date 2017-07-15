@@ -1,25 +1,11 @@
 /*
  * Copyright 2002-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
- */
-
-/* ====================================================================
- * Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
- *
- * The Elliptic Curve Public-Key Crypto Library (ECC Code) included
- * herein is developed by SUN MICROSYSTEMS, INC., and is contributed
- * to the OpenSSL project.
- *
- * The ECC Code is licensed pursuant to the OpenSSL open source
- * license provided below.
- *
- * The software is originally written by Sheueling Chang Shantz and
- * Douglas Stebila of Sun Microsystems Laboratories.
- *
  */
 
 #include <openssl/err.h>
@@ -223,7 +209,7 @@ static int ec_GF2m_montgomery_point_multiply(const EC_GROUP *group,
                                              BN_CTX *ctx)
 {
     BIGNUM *x1, *x2, *z1, *z2;
-    int ret = 0, i;
+    int ret = 0, i, group_top;
     BN_ULONG mask, word;
 
     if (r == point) {
@@ -253,10 +239,12 @@ static int ec_GF2m_montgomery_point_multiply(const EC_GROUP *group,
     x2 = r->X;
     z2 = r->Y;
 
-    bn_wexpand(x1, bn_get_top(group->field));
-    bn_wexpand(z1, bn_get_top(group->field));
-    bn_wexpand(x2, bn_get_top(group->field));
-    bn_wexpand(z2, bn_get_top(group->field));
+    group_top = bn_get_top(group->field);
+    if (bn_wexpand(x1, group_top) == NULL
+        || bn_wexpand(z1, group_top) == NULL
+        || bn_wexpand(x2, group_top) == NULL
+        || bn_wexpand(z2, group_top) == NULL)
+        goto err;
 
     if (!BN_GF2m_mod_arr(x1, point->X, group->poly))
         goto err;               /* x1 = x */
@@ -285,14 +273,14 @@ static int ec_GF2m_montgomery_point_multiply(const EC_GROUP *group,
     for (; i >= 0; i--) {
         word = bn_get_words(scalar)[i];
         while (mask) {
-            BN_consttime_swap(word & mask, x1, x2, bn_get_top(group->field));
-            BN_consttime_swap(word & mask, z1, z2, bn_get_top(group->field));
+            BN_consttime_swap(word & mask, x1, x2, group_top);
+            BN_consttime_swap(word & mask, z1, z2, group_top);
             if (!gf2m_Madd(group, point->X, x2, z2, x1, z1, ctx))
                 goto err;
             if (!gf2m_Mdouble(group, x1, z1, ctx))
                 goto err;
-            BN_consttime_swap(word & mask, x1, x2, bn_get_top(group->field));
-            BN_consttime_swap(word & mask, z1, z2, bn_get_top(group->field));
+            BN_consttime_swap(word & mask, x1, x2, group_top);
+            BN_consttime_swap(word & mask, z1, z2, group_top);
             mask >>= 1;
         }
         mask = BN_TBIT;

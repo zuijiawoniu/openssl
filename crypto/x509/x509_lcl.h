@@ -7,6 +7,8 @@
  * https://www.openssl.org/source/license.html
  */
 
+#include "internal/refcount.h"
+
 /*
  * This structure holds all parameters associated with a verify operation by
  * including an X509_VERIFY_PARAM structure in related structures the
@@ -16,7 +18,7 @@
 struct X509_VERIFY_PARAM_st {
     char *name;
     time_t check_time;          /* Time to use */
-    unsigned long inh_flags;    /* Inheritance flags */
+    uint32_t inh_flags;         /* Inheritance flags */
     unsigned long flags;        /* Various verify flags */
     int purpose;                /* purpose to check untrusted certificates */
     int trust;                  /* trust setting to check */
@@ -130,7 +132,7 @@ struct x509_store_st {
     STACK_OF(X509_CRL) *(*lookup_crls) (X509_STORE_CTX *ctx, X509_NAME *nm);
     int (*cleanup) (X509_STORE_CTX *ctx);
     CRYPTO_EX_DATA ex_data;
-    int references;
+    CRYPTO_REF_COUNT references;
     CRYPTO_RWLOCK *lock;
 };
 
@@ -140,3 +142,6 @@ DEFINE_STACK_OF(BY_DIR_HASH)
 DEFINE_STACK_OF(BY_DIR_ENTRY)
 typedef STACK_OF(X509_NAME_ENTRY) STACK_OF_X509_NAME_ENTRY;
 DEFINE_STACK_OF(STACK_OF_X509_NAME_ENTRY)
+
+void x509_set_signature_info(X509_SIG_INFO *siginf, const X509_ALGOR *alg,
+                             const ASN1_STRING *sig);

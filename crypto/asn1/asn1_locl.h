@@ -1,5 +1,5 @@
 /*
- * Copyright 2005-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2005-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -45,6 +45,8 @@ DEFINE_STACK_OF(MIME_HEADER)
 /* Month values for printing out times */
 extern const char *_asn1_mon[12];
 
+void asn1_string_embed_free(ASN1_STRING *a, int embed);
+
 int asn1_get_choice_selector(ASN1_VALUE **pval, const ASN1_ITEM *it);
 int asn1_set_choice_selector(ASN1_VALUE **pval, int value,
                              const ASN1_ITEM *it);
@@ -63,7 +65,7 @@ int asn1_enc_restore(int *len, unsigned char **out, ASN1_VALUE **pval,
 int asn1_enc_save(ASN1_VALUE **pval, const unsigned char *in, int inlen,
                   const ASN1_ITEM *it);
 
-void asn1_primitive_free(ASN1_VALUE **pval, const ASN1_ITEM *it);
+void asn1_primitive_free(ASN1_VALUE **pval, const ASN1_ITEM *it, int embed);
 void asn1_template_free(ASN1_VALUE **pval, const ASN1_TEMPLATE *tt);
 
 ASN1_OBJECT *c2i_ASN1_OBJECT(ASN1_OBJECT **a, const unsigned char **pp,
@@ -74,3 +76,7 @@ ASN1_BIT_STRING *c2i_ASN1_BIT_STRING(ASN1_BIT_STRING **a,
 int i2c_ASN1_INTEGER(ASN1_INTEGER *a, unsigned char **pp);
 ASN1_INTEGER *c2i_ASN1_INTEGER(ASN1_INTEGER **a, const unsigned char **pp,
                                long length);
+
+/* Internal functions used by x_int64.c */
+int c2i_uint64_int(uint64_t *ret, int *neg, const unsigned char **pp, long len);
+int i2c_uint64_int(unsigned char *p, uint64_t r, int neg);

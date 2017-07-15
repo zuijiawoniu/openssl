@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -35,7 +35,7 @@ typedef enum OPTION_choice {
     OPT_NOOUT, OPT_TEXT, OPT_MODULUS, OPT_CHECK, OPT_CIPHER
 } OPTION_CHOICE;
 
-OPTIONS rsa_options[] = {
+const OPTIONS rsa_options[] = {
     {"help", OPT_HELP, '-', "Display this summary"},
     {"inform", OPT_INFORM, 'f', "Input format, one of DER NET PEM"},
     {"outform", OPT_OUTFORM, 'f', "Output format, one of DER NET PEM PVK"},
@@ -176,12 +176,14 @@ int rsa_main(int argc, char **argv)
                     tmpformat = FORMAT_PEMRSA;
                 else if (informat == FORMAT_ASN1)
                     tmpformat = FORMAT_ASN1RSA;
-            } else
+            } else {
                 tmpformat = informat;
+            }
 
             pkey = load_pubkey(infile, tmpformat, 1, passin, e, "Public Key");
-        } else
+        } else {
             pkey = load_key(infile, informat, 1, passin, e, "Private Key");
+        }
 
         if (pkey != NULL)
             rsa = EVP_PKEY_get1_RSA(pkey);
@@ -217,9 +219,9 @@ int rsa_main(int argc, char **argv)
     if (check) {
         int r = RSA_check_key(rsa);
 
-        if (r == 1)
+        if (r == 1) {
             BIO_printf(out, "RSA key ok\n");
-        else if (r == 0) {
+        } else if (r == 0) {
             unsigned long err;
 
             while ((err = ERR_peek_error()) != 0 &&
@@ -251,8 +253,7 @@ int rsa_main(int argc, char **argv)
             assert(private);
             i = i2d_RSAPrivateKey_bio(out, rsa);
         }
-    }
-    else if (outformat == FORMAT_PEM) {
+    } else if (outformat == FORMAT_PEM) {
         if (pubout || pubin) {
             if (pubout == 2)
                 i = PEM_write_bio_RSAPublicKey(out, rsa);
@@ -263,7 +264,7 @@ int rsa_main(int argc, char **argv)
             i = PEM_write_bio_RSAPrivateKey(out, rsa,
                                             enc, NULL, 0, NULL, passout);
         }
-# if !defined(OPENSSL_NO_DSA) && !defined(OPENSSL_NO_RC4)
+# ifndef OPENSSL_NO_DSA
     } else if (outformat == FORMAT_MSBLOB || outformat == FORMAT_PVK) {
         EVP_PKEY *pk;
         pk = EVP_PKEY_new();
@@ -275,7 +276,13 @@ int rsa_main(int argc, char **argv)
                 goto end;
             }
             assert(private);
+#  ifdef OPENSSL_NO_RC4
+            BIO_printf(bio_err, "PVK format not supported\n");
+            EVP_PKEY_free(pk);
+            goto end;
+#  else
             i = i2b_PVK_bio(out, pk, pvk_encr, 0, passout);
+#  endif
         } else if (pubin || pubout) {
             i = i2b_PublicKey_bio(out, pk);
         } else {
@@ -291,9 +298,11 @@ int rsa_main(int argc, char **argv)
     if (i <= 0) {
         BIO_printf(bio_err, "unable to write key\n");
         ERR_print_errors(bio_err);
-    } else
+    } else {
         ret = 0;
+    }
  end:
+    release_engine(e);
     BIO_free_all(out);
     RSA_free(rsa);
     OPENSSL_free(passin);

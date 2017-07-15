@@ -31,16 +31,10 @@
  * work which got its smarts from Daniel J. Bernstein's work on the same.
  */
 
-#include <openssl/opensslconf.h>
+#include <openssl/e_os2.h>
 #ifdef OPENSSL_NO_EC_NISTP_64_GCC_128
 NON_EMPTY_TRANSLATION_UNIT
 #else
-
-# ifndef OPENSSL_SYS_VMS
-#  include <stdint.h>
-# else
-#  include <inttypes.h>
-# endif
 
 # include <string.h>
 # include <openssl/err.h>
@@ -1594,7 +1588,7 @@ static void batch_mul(felem x_out, felem y_out, felem z_out,
 /* Precomputation for the group generator. */
 struct nistp521_pre_comp_st {
     felem g_pre_comp[16][3];
-    int references;
+    CRYPTO_REF_COUNT references;
     CRYPTO_RWLOCK *lock;
 };
 
@@ -1684,7 +1678,7 @@ NISTP521_PRE_COMP *EC_nistp521_pre_comp_dup(NISTP521_PRE_COMP *p)
 {
     int i;
     if (p != NULL)
-        CRYPTO_atomic_add(&p->references, 1, &i, p->lock);
+        CRYPTO_UP_REF(&p->references, &i, p->lock);
     return p;
 }
 
@@ -1695,7 +1689,7 @@ void EC_nistp521_pre_comp_free(NISTP521_PRE_COMP *p)
     if (p == NULL)
         return;
 
-    CRYPTO_atomic_add(&p->references, -1, &i, p->lock);
+    CRYPTO_DOWN_REF(&p->references, &i, p->lock);
     REF_PRINT_COUNT("EC_nistp521", x);
     if (i > 0)
         return;
@@ -1730,9 +1724,10 @@ int ec_GFp_nistp521_group_set_curve(EC_GROUP *group, const BIGNUM *p,
         if ((ctx = new_ctx = BN_CTX_new()) == NULL)
             return 0;
     BN_CTX_start(ctx);
-    if (((curve_p = BN_CTX_get(ctx)) == NULL) ||
-        ((curve_a = BN_CTX_get(ctx)) == NULL) ||
-        ((curve_b = BN_CTX_get(ctx)) == NULL))
+    curve_p = BN_CTX_get(ctx);
+    curve_a = BN_CTX_get(ctx);
+    curve_b = BN_CTX_get(ctx);
+    if (curve_b == NULL)
         goto err;
     BN_bin2bn(nistp521_curve_params[0], sizeof(felem_bytearray), curve_p);
     BN_bin2bn(nistp521_curve_params[1], sizeof(felem_bytearray), curve_a);
@@ -1862,10 +1857,11 @@ int ec_GFp_nistp521_points_mul(const EC_GROUP *group, EC_POINT *r,
         if ((ctx = new_ctx = BN_CTX_new()) == NULL)
             return 0;
     BN_CTX_start(ctx);
-    if (((x = BN_CTX_get(ctx)) == NULL) ||
-        ((y = BN_CTX_get(ctx)) == NULL) ||
-        ((z = BN_CTX_get(ctx)) == NULL) ||
-        ((tmp_scalar = BN_CTX_get(ctx)) == NULL))
+    x = BN_CTX_get(ctx);
+    y = BN_CTX_get(ctx);
+    z = BN_CTX_get(ctx);
+    tmp_scalar = BN_CTX_get(ctx);
+    if (tmp_scalar == NULL)
         goto err;
 
     if (scalar != NULL) {
@@ -2049,7 +2045,9 @@ int ec_GFp_nistp521_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
         if ((ctx = new_ctx = BN_CTX_new()) == NULL)
             return 0;
     BN_CTX_start(ctx);
-    if (((x = BN_CTX_get(ctx)) == NULL) || ((y = BN_CTX_get(ctx)) == NULL))
+    x = BN_CTX_get(ctx);
+    y = BN_CTX_get(ctx);
+    if (y == NULL)
         goto err;
     /* get the generator */
     if (group->generator == NULL)

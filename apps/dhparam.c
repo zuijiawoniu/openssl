@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -39,7 +39,7 @@ typedef enum OPTION_choice {
     OPT_RAND, OPT_DSAPARAM, OPT_C, OPT_2, OPT_5
 } OPTION_CHOICE;
 
-OPTIONS dhparam_options[] = {
+const OPTIONS dhparam_options[] = {
     {OPT_HELP_STR, 1, '-', "Usage: %s [flags] [numbits]\n"},
     {OPT_HELP_STR, 1, '-', "Valid options are:\n"},
     {"help", OPT_HELP, '-', "Display this summary"},
@@ -70,6 +70,7 @@ int dhparam_main(int argc, char **argv)
     BIO *in = NULL, *out = NULL;
     DH *dh = NULL;
     char *infile = NULL, *outfile = NULL, *prog, *inrand = NULL;
+    ENGINE *e = NULL;
 #ifndef OPENSSL_NO_DSA
     int dsaparam = 0;
 #endif
@@ -104,7 +105,7 @@ int dhparam_main(int argc, char **argv)
             outfile = opt_arg();
             break;
         case OPT_ENGINE:
-            (void)setup_engine(opt_arg(), 0);
+            e = setup_engine(opt_arg(), 0);
             break;
         case OPT_CHECK:
             check = 1;
@@ -137,7 +138,7 @@ int dhparam_main(int argc, char **argv)
     argc = opt_num_rest();
     argv = opt_rest();
 
-    if (argv[0] && (!opt_int(argv[0], &num) || num <= 0))
+    if (argv[0] != NULL && (!opt_int(argv[0], &num) || num <= 0))
         goto end;
 
     if (g && !num)
@@ -241,10 +242,19 @@ int dhparam_main(int argc, char **argv)
         } else
 # endif
         {
-            if (informat == FORMAT_ASN1)
+            if (informat == FORMAT_ASN1) {
+                /*
+                 * We have no PEM header to determine what type of DH params it
+                 * is. We'll just try both.
+                 */
                 dh = d2i_DHparams_bio(in, NULL);
-            else                /* informat == FORMAT_PEM */
+                /* BIO_reset() returns 0 for success for file BIOs only!!! */
+                if (dh == NULL && BIO_reset(in) == 0)
+                    dh = d2i_DHxparams_bio(in, NULL);
+            } else {
+                /* informat == FORMAT_PEM */
                 dh = PEM_read_bio_DHparams(in, NULL, NULL, NULL);
+            }
 
             if (dh == NULL) {
                 BIO_printf(bio_err, "unable to load DH parameters\n");
@@ -339,12 +349,16 @@ int dhparam_main(int argc, char **argv)
     if (!noout) {
         const BIGNUM *q;
         DH_get0_pqg(dh, NULL, &q, NULL);
-        if (outformat == FORMAT_ASN1)
-            i = i2d_DHparams_bio(out, dh);
-        else if (q != NULL)
+        if (outformat == FORMAT_ASN1) {
+            if (q != NULL)
+                i = i2d_DHxparams_bio(out, dh);
+            else
+                i = i2d_DHparams_bio(out, dh);
+        } else if (q != NULL) {
             i = PEM_write_bio_DHxparams(out, dh);
-        else
+        } else {
             i = PEM_write_bio_DHparams(out, dh);
+        }
         if (!i) {
             BIO_printf(bio_err, "unable to write DH parameters\n");
             ERR_print_errors(bio_err);
@@ -356,6 +370,7 @@ int dhparam_main(int argc, char **argv)
     BIO_free(in);
     BIO_free_all(out);
     DH_free(dh);
+    release_engine(e);
     return (ret);
 }
 

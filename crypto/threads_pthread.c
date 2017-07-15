@@ -8,11 +8,17 @@
  */
 
 #include <openssl/crypto.h>
+#include <internal/cryptlib.h>
 
 #if defined(OPENSSL_THREADS) && !defined(CRYPTO_TDEBUG) && !defined(OPENSSL_SYS_WINDOWS)
 
+# ifdef PTHREAD_RWLOCK_INITIALIZER
+#  define USE_RWLOCK
+# endif
+
 CRYPTO_RWLOCK *CRYPTO_THREAD_lock_new(void)
 {
+# ifdef USE_RWLOCK
     CRYPTO_RWLOCK *lock = OPENSSL_zalloc(sizeof(pthread_rwlock_t));
     if (lock == NULL)
         return NULL;
@@ -21,30 +27,62 @@ CRYPTO_RWLOCK *CRYPTO_THREAD_lock_new(void)
         OPENSSL_free(lock);
         return NULL;
     }
+# else
+    pthread_mutexattr_t attr;
+    CRYPTO_RWLOCK *lock = OPENSSL_zalloc(sizeof(pthread_mutex_t));
+    if (lock == NULL)
+        return NULL;
+
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+
+    if (pthread_mutex_init(lock, &attr) != 0) {
+        pthread_mutexattr_destroy(&attr);
+        OPENSSL_free(lock);
+        return NULL;
+    }
+
+    pthread_mutexattr_destroy(&attr);
+# endif
 
     return lock;
 }
 
 int CRYPTO_THREAD_read_lock(CRYPTO_RWLOCK *lock)
 {
+# ifdef USE_RWLOCK
     if (pthread_rwlock_rdlock(lock) != 0)
         return 0;
+# else
+    if (pthread_mutex_lock(lock) != 0)
+        return 0;
+# endif
 
     return 1;
 }
 
 int CRYPTO_THREAD_write_lock(CRYPTO_RWLOCK *lock)
 {
+# ifdef USE_RWLOCK
     if (pthread_rwlock_wrlock(lock) != 0)
         return 0;
+# else
+    if (pthread_mutex_lock(lock) != 0)
+        return 0;
+# endif
 
     return 1;
 }
 
 int CRYPTO_THREAD_unlock(CRYPTO_RWLOCK *lock)
 {
+# ifdef USE_RWLOCK
     if (pthread_rwlock_unlock(lock) != 0)
         return 0;
+# else
+    if (pthread_mutex_unlock(lock) != 0)
+        return 0;
+# endif
 
     return 1;
 }
@@ -54,7 +92,11 @@ void CRYPTO_THREAD_lock_free(CRYPTO_RWLOCK *lock)
     if (lock == NULL)
         return;
 
+# ifdef USE_RWLOCK
     pthread_rwlock_destroy(lock);
+# else
+    pthread_mutex_destroy(lock);
+# endif
     OPENSSL_free(lock);
 
     return;
@@ -127,4 +169,13 @@ int CRYPTO_atomic_add(int *val, int amount, int *ret, CRYPTO_RWLOCK *lock)
     return 1;
 }
 
+int openssl_init_fork_handlers(void)
+{
+# ifdef OPENSSL_SYS_UNIX
+    if (pthread_atfork(OPENSSL_fork_prepare,
+                       OPENSSL_fork_parent, OPENSSL_fork_child) == 0)
+        return 1;
+# endif
+    return 0;
+}
 #endif

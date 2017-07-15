@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -35,7 +35,7 @@ typedef enum OPTION_choice {
     OPT_B, OPT_D, OPT_E, OPT_F, OPT_O, OPT_P, OPT_V, OPT_A
 } OPTION_CHOICE;
 
-OPTIONS version_options[] = {
+const OPTIONS version_options[] = {
     {"help", OPT_HELP, '-', "Display this summary"},
     {"a", OPT_A, '-', "Show all data"},
     {"b", OPT_B, '-', "Show build date"},
@@ -97,12 +97,11 @@ int version_main(int argc, char **argv)
         version = 1;
 
     if (version) {
-        if (OpenSSL_version_num() == OPENSSL_VERSION_NUMBER) {
+        if (OpenSSL_version_num() == OPENSSL_VERSION_NUMBER)
             printf("%s\n", OpenSSL_version(OPENSSL_VERSION));
-        } else {
+        else
             printf("%s (Library: %s)\n",
                    OPENSSL_VERSION_TEXT, OpenSSL_version(OPENSSL_VERSION));
-        }
     }
     if (date)
         printf("%s\n", OpenSSL_version(OPENSSL_BUILT_ON));

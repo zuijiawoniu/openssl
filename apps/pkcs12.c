@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1999-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -26,6 +26,8 @@ NON_EMPTY_TRANSLATION_UNIT
 # define INFO            0x4
 # define CLCERTS         0x8
 # define CACERTS         0x10
+
+#define PASSWD_BUF_SIZE 2048
 
 static int get_cert_chain(X509 *cert, X509_STORE *store,
                           STACK_OF(X509) **chain);
@@ -56,7 +58,7 @@ typedef enum OPTION_choice {
     OPT_CAFILE, OPT_NOCAPATH, OPT_NOCAFILE, OPT_ENGINE
 } OPTION_CHOICE;
 
-OPTIONS pkcs12_options[] = {
+const OPTIONS pkcs12_options[] = {
     {"help", OPT_HELP, '-', "Display this summary"},
     {"nokeys", OPT_NOKEYS, '-', "Don't output private keys"},
     {"keyex", OPT_KEYEX, '-', "Set MS key exchange type"},
@@ -91,7 +93,7 @@ OPTIONS pkcs12_options[] = {
     {"keypbe", OPT_KEYPBE, 's', "Private key PBE algorithm (default 3DES)"},
     {"rand", OPT_RAND, 's',
      "Load the file(s) into the random number generator"},
-    {"inkey", OPT_INKEY, '<', "Private key if not infile"},
+    {"inkey", OPT_INKEY, 's', "Private key if not infile"},
     {"certfile", OPT_CERTFILE, '<', "Load certs from file"},
     {"name", OPT_NAME, 's', "Use name as friendly name"},
     {"CSP", OPT_CSP, 's', "Microsoft CSP name"},
@@ -119,7 +121,7 @@ int pkcs12_main(int argc, char **argv)
 {
     char *infile = NULL, *outfile = NULL, *keyname = NULL, *certfile = NULL;
     char *name = NULL, *csp_name = NULL;
-    char pass[2048] = "", macpass[2048] = "";
+    char pass[PASSWD_BUF_SIZE] = "", macpass[PASSWD_BUF_SIZE] = "";
     int export_cert = 0, options = 0, chain = 0, twopass = 0, keytype = 0;
     int iter = PKCS12_DEFAULT_ITER, maciter = PKCS12_DEFAULT_ITER;
 # ifndef OPENSSL_NO_RC2
@@ -285,7 +287,7 @@ int pkcs12_main(int argc, char **argv)
 
     private = 1;
 
-    if (passarg) {
+    if (passarg != NULL) {
         if (export_cert)
             passoutarg = passarg;
         else
@@ -297,14 +299,14 @@ int pkcs12_main(int argc, char **argv)
         goto end;
     }
 
-    if (!cpass) {
+    if (cpass == NULL) {
         if (export_cert)
             cpass = passout;
         else
             cpass = passin;
     }
 
-    if (cpass) {
+    if (cpass != NULL) {
         mpass = cpass;
         noprompt = 1;
     } else {
@@ -312,7 +314,7 @@ int pkcs12_main(int argc, char **argv)
         mpass = macpass;
     }
 
-    if (export_cert || inrand) {
+    if (export_cert || inrand != NULL) {
         app_RAND_load_file(NULL, (inrand != NULL));
         if (inrand != NULL)
             BIO_printf(bio_err, "%ld semi-random bytes loaded\n",
@@ -320,8 +322,9 @@ int pkcs12_main(int argc, char **argv)
     }
 
     if (twopass) {
+        /* To avoid bit rot */
         if (1) {
-#ifndef OPENSSL_NO_UI
+#ifndef OPENSSL_NO_UI_CONSOLE
             if (EVP_read_pw_string
                 (macpass, sizeof macpass, "Enter MAC Password:", export_cert)) {
                 BIO_printf(bio_err, "Can't read Password\n");
@@ -353,7 +356,7 @@ int pkcs12_main(int argc, char **argv)
         if (!(options & NOKEYS)) {
             key = load_key(keyname ? keyname : infile,
                            FORMAT_PEM, 1, passin, e, "private key");
-            if (!key)
+            if (key == NULL)
                 goto export_end;
         }
 
@@ -363,7 +366,7 @@ int pkcs12_main(int argc, char **argv)
                             "certificates"))
                 goto export_end;
 
-            if (key) {
+            if (key != NULL) {
                 /* Look for matching private key */
                 for (i = 0; i < sk_X509_num(certs); i++) {
                     x = sk_X509_value(certs, i);
@@ -377,7 +380,7 @@ int pkcs12_main(int argc, char **argv)
                         break;
                     }
                 }
-                if (!ucert) {
+                if (ucert == NULL) {
                     BIO_printf(bio_err,
                                "No certificate matches private key\n");
                     goto export_end;
@@ -387,7 +390,7 @@ int pkcs12_main(int argc, char **argv)
         }
 
         /* Add any more certificates asked for */
-        if (certfile) {
+        if (certfile != NULL) {
             if (!load_certs(certfile, &certs, FORMAT_PEM, NULL,
                             "certificates from certfile"))
                 goto export_end;
@@ -429,17 +432,18 @@ int pkcs12_main(int argc, char **argv)
             X509_alias_set1(sk_X509_value(certs, i), catmp, -1);
         }
 
-        if (csp_name && key)
+        if (csp_name != NULL && key != NULL)
             EVP_PKEY_add1_attr_by_NID(key, NID_ms_csp_name,
                                       MBSTRING_ASC, (unsigned char *)csp_name,
                                       -1);
 
-        if (add_lmk && key)
+        if (add_lmk && key != NULL)
             EVP_PKEY_add1_attr_by_NID(key, NID_LocalKeySet, 0, NULL, -1);
 
         if (!noprompt) {
+            /* To avoid bit rot */
             if (1) {
-#ifndef OPENSSL_NO_UI
+#ifndef OPENSSL_NO_UI_CONSOLE
                 if (EVP_read_pw_string(pass, sizeof pass, "Enter Export Password:",
                                        1)) {
                     BIO_printf(bio_err, "Can't read Password\n");
@@ -453,7 +457,7 @@ int pkcs12_main(int argc, char **argv)
         }
 
         if (!twopass)
-            OPENSSL_strlcpy(macpass, pass, sizeof macpass);
+            OPENSSL_strlcpy(macpass, pass, sizeof(macpass));
 
         p12 = PKCS12_create(cpass, name, key, ucert, certs,
                             key_pbe, cert_pbe, iter, -1, keytype);
@@ -505,7 +509,7 @@ int pkcs12_main(int argc, char **argv)
 
     if (!noprompt) {
         if (1) {
-#ifndef OPENSSL_NO_UI
+#ifndef OPENSSL_NO_UI_CONSOLE
             if (EVP_read_pw_string(pass, sizeof pass, "Enter Import Password:",
                                    0)) {
                 BIO_printf(bio_err, "Can't read Password\n");
@@ -574,13 +578,14 @@ int pkcs12_main(int argc, char **argv)
     PKCS12_free(p12);
     if (export_cert || inrand)
         app_RAND_write_file(NULL);
+    release_engine(e);
     BIO_free(in);
     BIO_free_all(out);
     sk_OPENSSL_STRING_free(canames);
     OPENSSL_free(badpass);
     OPENSSL_free(passin);
     OPENSSL_free(passout);
-    return (ret);
+    return ret;
 }
 
 int dump_certs_keys_p12(BIO *out, const PKCS12 *p12, const char *pass,
@@ -608,8 +613,9 @@ int dump_certs_keys_p12(BIO *out, const PKCS12 *p12, const char *pass,
                 alg_print(p7->d.encrypted->enc_data->algorithm);
             }
             bags = PKCS12_unpack_p7encdata(p7, pass, passlen);
-        } else
+        } else {
             continue;
+        }
         if (!bags)
             goto err;
         if (!dump_certs_pkeys_bags(out, bags, pass, passlen,
@@ -873,8 +879,9 @@ int print_attribs(BIO *out, const STACK_OF(X509_ATTRIBUTE) *attrlst,
         if (attr_nid == NID_undef) {
             i2a_ASN1_OBJECT(out, attr_obj);
             BIO_printf(out, ": ");
-        } else
+        } else {
             BIO_printf(out, "%s: ", OBJ_nid2ln(attr_nid));
+        }
 
         if (X509_ATTRIBUTE_count(attr)) {
             av = X509_ATTRIBUTE_get0_type(attr, 0);
@@ -902,8 +909,9 @@ int print_attribs(BIO *out, const STACK_OF(X509_ATTRIBUTE) *attrlst,
                 BIO_printf(out, "<Unsupported tag %d>\n", av->type);
                 break;
             }
-        } else
+        } else {
             BIO_printf(out, "<No Values>\n");
+        }
     }
     return 1;
 }

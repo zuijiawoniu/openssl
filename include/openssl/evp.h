@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -14,6 +14,7 @@
 # include <openssl/ossl_typ.h>
 # include <openssl/symhacks.h>
 # include <openssl/bio.h>
+# include <openssl/evperr.h>
 
 # define EVP_MAX_MD_SIZE                 64/* longest known is SHA512 */
 # define EVP_MAX_KEY_LENGTH              64
@@ -40,6 +41,7 @@
 # define EVP_PKEY_NONE   NID_undef
 # define EVP_PKEY_RSA    NID_rsaEncryption
 # define EVP_PKEY_RSA2   NID_rsa
+# define EVP_PKEY_RSA_PSS NID_rsassaPss
 # define EVP_PKEY_DSA    NID_dsa
 # define EVP_PKEY_DSA1   NID_dsa_2
 # define EVP_PKEY_DSA2   NID_dsaWithSHA
@@ -52,6 +54,10 @@
 # define EVP_PKEY_CMAC   NID_cmac
 # define EVP_PKEY_TLS1_PRF NID_tls1_prf
 # define EVP_PKEY_HKDF   NID_hkdf
+# define EVP_PKEY_POLY1305 NID_poly1305
+# define EVP_PKEY_SIPHASH NID_siphash
+# define EVP_PKEY_X25519 NID_X25519
+# define EVP_PKEY_ED25519 NID_ED25519
 
 #ifdef  __cplusplus
 extern "C" {
@@ -364,6 +370,15 @@ typedef struct {
 # define EVP_CCM_TLS_FIXED_IV_LEN                        4
 /* Length of explicit part of IV part of TLS records */
 # define EVP_CCM_TLS_EXPLICIT_IV_LEN                     8
+/* Total length of CCM IV length for TLS */
+# define EVP_CCM_TLS_IV_LEN                              12
+/* Length of tag for TLS */
+# define EVP_CCM_TLS_TAG_LEN                             16
+/* Length of CCM8 tag for TLS */
+# define EVP_CCM8_TLS_TAG_LEN                            8
+
+/* Length of tag for TLS */
+# define EVP_CHACHAPOLY_TLS_TAG_LEN                      16
 
 typedef struct evp_cipher_info_st {
     const EVP_CIPHER *cipher;
@@ -395,6 +410,15 @@ typedef int (EVP_PBE_KEYGEN) (EVP_CIPHER_CTX *ctx, const char *pass,
 # ifndef OPENSSL_NO_EC
 #  define EVP_PKEY_assign_EC_KEY(pkey,eckey) EVP_PKEY_assign((pkey),EVP_PKEY_EC,\
                                         (char *)(eckey))
+# endif
+# ifndef OPENSSL_NO_SIPHASH
+#  define EVP_PKEY_assign_SIPHASH(pkey,shkey) EVP_PKEY_assign((pkey),EVP_PKEY_SIPHASH,\
+                                        (char *)(shkey))
+# endif
+
+# ifndef OPENSSL_NO_POLY1305
+#  define EVP_PKEY_assign_POLY1305(pkey,polykey) EVP_PKEY_assign((pkey),EVP_PKEY_POLY1305,\
+                                        (char *)(polykey))
 # endif
 
 /* Add some extra combinations */
@@ -455,8 +479,8 @@ void *EVP_CIPHER_CTX_set_cipher_data(EVP_CIPHER_CTX *ctx, void *cipher_data);
 # endif
 # define EVP_CIPHER_CTX_mode(c)         EVP_CIPHER_mode(EVP_CIPHER_CTX_cipher(c))
 
-# define EVP_ENCODE_LENGTH(l)    (((l+2)/3*4)+(l/48+1)*2+80)
-# define EVP_DECODE_LENGTH(l)    ((l+3)/4*3+80)
+# define EVP_ENCODE_LENGTH(l)    ((((l)+2)/3*4)+((l)/48+1)*2+80)
+# define EVP_DECODE_LENGTH(l)    (((l)+3)/4*3+80)
 
 # define EVP_SignInit_ex(a,b,c)          EVP_DigestInit_ex(a,b,c)
 # define EVP_SignInit(a,b)               EVP_DigestInit(a,b)
@@ -472,13 +496,16 @@ void *EVP_CIPHER_CTX_set_cipher_data(EVP_CIPHER_CTX *ctx, void *cipher_data);
 # ifdef CONST_STRICT
 void BIO_set_md(BIO *, const EVP_MD *md);
 # else
-#  define BIO_set_md(b,md)               BIO_ctrl(b,BIO_C_SET_MD,0,(char *)md)
+#  define BIO_set_md(b,md)          BIO_ctrl(b,BIO_C_SET_MD,0,(char *)(md))
 # endif
-# define BIO_get_md(b,mdp)               BIO_ctrl(b,BIO_C_GET_MD,0,(char *)mdp)
-# define BIO_get_md_ctx(b,mdcp)     BIO_ctrl(b,BIO_C_GET_MD_CTX,0,(char *)mdcp)
-# define BIO_set_md_ctx(b,mdcp)     BIO_ctrl(b,BIO_C_SET_MD_CTX,0,(char *)mdcp)
-# define BIO_get_cipher_status(b)        BIO_ctrl(b,BIO_C_GET_CIPHER_STATUS,0,NULL)
-# define BIO_get_cipher_ctx(b,c_pp)      BIO_ctrl(b,BIO_C_GET_CIPHER_CTX,0,(char *)c_pp)
+# define BIO_get_md(b,mdp)          BIO_ctrl(b,BIO_C_GET_MD,0,(char *)(mdp))
+# define BIO_get_md_ctx(b,mdcp)     BIO_ctrl(b,BIO_C_GET_MD_CTX,0, \
+                                             (char *)(mdcp))
+# define BIO_set_md_ctx(b,mdcp)     BIO_ctrl(b,BIO_C_SET_MD_CTX,0, \
+                                             (char *)(mdcp))
+# define BIO_get_cipher_status(b)   BIO_ctrl(b,BIO_C_GET_CIPHER_STATUS,0,NULL)
+# define BIO_get_cipher_ctx(b,c_pp) BIO_ctrl(b,BIO_C_GET_CIPHER_CTX,0, \
+                                             (char *)(c_pp))
 
 /*__owur*/ int EVP_Cipher(EVP_CIPHER_CTX *c,
                           unsigned char *out,
@@ -519,13 +546,11 @@ __owur int EVP_DigestInit(EVP_MD_CTX *ctx, const EVP_MD *type);
 __owur int EVP_DigestFinal(EVP_MD_CTX *ctx, unsigned char *md,
                            unsigned int *s);
 
-#ifndef OPENSSL_NO_UI
 int EVP_read_pw_string(char *buf, int length, const char *prompt, int verify);
 int EVP_read_pw_string_min(char *buf, int minlen, int maxlen,
                            const char *prompt, int verify);
 void EVP_set_pw_prompt(const char *prompt);
 char *EVP_get_pw_prompt(void);
-#endif
 
 __owur int EVP_BytesToKey(const EVP_CIPHER *type, const EVP_MD *md,
                           const unsigned char *salt,
@@ -579,8 +604,16 @@ __owur int EVP_CipherFinal_ex(EVP_CIPHER_CTX *ctx, unsigned char *outm,
 __owur int EVP_SignFinal(EVP_MD_CTX *ctx, unsigned char *md, unsigned int *s,
                          EVP_PKEY *pkey);
 
+__owur int EVP_DigestSign(EVP_MD_CTX *ctx, unsigned char *sigret,
+                          size_t *siglen, const unsigned char *tbs,
+                          size_t tbslen);
+
 __owur int EVP_VerifyFinal(EVP_MD_CTX *ctx, const unsigned char *sigbuf,
                            unsigned int siglen, EVP_PKEY *pkey);
+
+__owur int EVP_DigestVerify(EVP_MD_CTX *ctx, const unsigned char *sigret,
+                            size_t siglen, const unsigned char *tbs,
+                            size_t tbslen);
 
 /*__owur*/ int EVP_DigestSignInit(EVP_MD_CTX *ctx, EVP_PKEY_CTX **pctx,
                                   const EVP_MD *type, ENGINE *e,
@@ -797,6 +830,32 @@ const EVP_CIPHER *EVP_aes_128_cbc_hmac_sha1(void);
 const EVP_CIPHER *EVP_aes_256_cbc_hmac_sha1(void);
 const EVP_CIPHER *EVP_aes_128_cbc_hmac_sha256(void);
 const EVP_CIPHER *EVP_aes_256_cbc_hmac_sha256(void);
+# ifndef OPENSSL_NO_ARIA
+const EVP_CIPHER *EVP_aria_128_ecb(void);
+const EVP_CIPHER *EVP_aria_128_cbc(void);
+const EVP_CIPHER *EVP_aria_128_cfb1(void);
+const EVP_CIPHER *EVP_aria_128_cfb8(void);
+const EVP_CIPHER *EVP_aria_128_cfb128(void);
+#  define EVP_aria_128_cfb EVP_aria_128_cfb128
+const EVP_CIPHER *EVP_aria_128_ctr(void);
+const EVP_CIPHER *EVP_aria_128_ofb(void);
+const EVP_CIPHER *EVP_aria_192_ecb(void);
+const EVP_CIPHER *EVP_aria_192_cbc(void);
+const EVP_CIPHER *EVP_aria_192_cfb1(void);
+const EVP_CIPHER *EVP_aria_192_cfb8(void);
+const EVP_CIPHER *EVP_aria_192_cfb128(void);
+#  define EVP_aria_192_cfb EVP_aria_192_cfb128
+const EVP_CIPHER *EVP_aria_192_ctr(void);
+const EVP_CIPHER *EVP_aria_192_ofb(void);
+const EVP_CIPHER *EVP_aria_256_ecb(void);
+const EVP_CIPHER *EVP_aria_256_cbc(void);
+const EVP_CIPHER *EVP_aria_256_cfb1(void);
+const EVP_CIPHER *EVP_aria_256_cfb8(void);
+const EVP_CIPHER *EVP_aria_256_cfb128(void);
+#  define EVP_aria_256_cfb EVP_aria_256_cfb128
+const EVP_CIPHER *EVP_aria_256_ctr(void);
+const EVP_CIPHER *EVP_aria_256_ofb(void);
+# endif
 # ifndef OPENSSL_NO_CAMELLIA
 const EVP_CIPHER *EVP_camellia_128_ecb(void);
 const EVP_CIPHER *EVP_camellia_128_cbc(void);
@@ -903,6 +962,12 @@ int EVP_PKEY_set_type_str(EVP_PKEY *pkey, const char *str, int len);
 int EVP_PKEY_assign(EVP_PKEY *pkey, int type, void *key);
 void *EVP_PKEY_get0(const EVP_PKEY *pkey);
 const unsigned char *EVP_PKEY_get0_hmac(const EVP_PKEY *pkey, size_t *len);
+# ifndef OPENSSL_NO_POLY1305
+const unsigned char *EVP_PKEY_get0_poly1305(const EVP_PKEY *pkey, size_t *len);
+# endif
+# ifndef OPENSSL_NO_SIPHASH
+const unsigned char *EVP_PKEY_get0_siphash(const EVP_PKEY *pkey, size_t *len);
+# endif
 
 # ifndef OPENSSL_NO_RSA
 struct rsa_st;
@@ -1142,15 +1207,15 @@ void EVP_PKEY_asn1_set_security_bits(EVP_PKEY_ASN1_METHOD *ameth,
 
 # define  EVP_PKEY_CTX_set_signature_md(ctx, md) \
                 EVP_PKEY_CTX_ctrl(ctx, -1, EVP_PKEY_OP_TYPE_SIG,  \
-                                        EVP_PKEY_CTRL_MD, 0, (void *)md)
+                                        EVP_PKEY_CTRL_MD, 0, (void *)(md))
 
 # define  EVP_PKEY_CTX_get_signature_md(ctx, pmd)        \
                 EVP_PKEY_CTX_ctrl(ctx, -1, EVP_PKEY_OP_TYPE_SIG,  \
-                                        EVP_PKEY_CTRL_GET_MD, 0, (void *)pmd)
+                                        EVP_PKEY_CTRL_GET_MD, 0, (void *)(pmd))
 
 # define  EVP_PKEY_CTX_set_mac_key(ctx, key, len)        \
                 EVP_PKEY_CTX_ctrl(ctx, -1, EVP_PKEY_OP_KEYGEN,  \
-                                  EVP_PKEY_CTRL_SET_MAC_KEY, len, (void *)key)
+                                  EVP_PKEY_CTRL_SET_MAC_KEY, len, (void *)(key))
 
 # define EVP_PKEY_CTRL_MD                1
 # define EVP_PKEY_CTRL_PEER_KEY          2
@@ -1174,6 +1239,8 @@ void EVP_PKEY_asn1_set_security_bits(EVP_PKEY_ASN1_METHOD *ameth,
 # define EVP_PKEY_CTRL_CIPHER            12
 
 # define EVP_PKEY_CTRL_GET_MD            13
+
+# define EVP_PKEY_CTRL_SET_DIGEST_SIZE   14
 
 # define EVP_PKEY_ALG_CTRL               0x1000
 
@@ -1203,6 +1270,8 @@ int EVP_PKEY_CTX_ctrl_str(EVP_PKEY_CTX *ctx, const char *type,
 
 int EVP_PKEY_CTX_str2ctrl(EVP_PKEY_CTX *ctx, int cmd, const char *str);
 int EVP_PKEY_CTX_hex2ctrl(EVP_PKEY_CTX *ctx, int cmd, const char *hex);
+
+int EVP_PKEY_CTX_md(EVP_PKEY_CTX *ctx, int optype, int cmd, const char *md);
 
 int EVP_PKEY_CTX_get_operation(EVP_PKEY_CTX *ctx);
 void EVP_PKEY_CTX_set0_keygen_info(EVP_PKEY_CTX *ctx, int *dat, int datlen);
@@ -1442,143 +1511,7 @@ void EVP_PKEY_meth_get_ctrl(EVP_PKEY_METHOD *pmeth,
 
 void EVP_add_alg_module(void);
 
-/* BEGIN ERROR CODES */
-/*
- * The following lines are auto generated by the script mkerr.pl. Any changes
- * made after this point may be overwritten when the script is next run.
- */
-
 int ERR_load_EVP_strings(void);
-
-/* Error codes for the EVP functions. */
-
-/* Function codes. */
-# define EVP_F_AESNI_INIT_KEY                             165
-# define EVP_F_AES_INIT_KEY                               133
-# define EVP_F_AES_T4_INIT_KEY                            178
-# define EVP_F_ALG_MODULE_INIT                            177
-# define EVP_F_CAMELLIA_INIT_KEY                          159
-# define EVP_F_CHACHA20_POLY1305_CTRL                     182
-# define EVP_F_CMLL_T4_INIT_KEY                           179
-# define EVP_F_DO_SIGVER_INIT                             161
-# define EVP_F_EVP_CIPHERINIT_EX                          123
-# define EVP_F_EVP_CIPHER_CTX_COPY                        163
-# define EVP_F_EVP_CIPHER_CTX_CTRL                        124
-# define EVP_F_EVP_CIPHER_CTX_SET_KEY_LENGTH              122
-# define EVP_F_EVP_DECRYPTFINAL_EX                        101
-# define EVP_F_EVP_DECRYPTUPDATE                          166
-# define EVP_F_EVP_DIGESTINIT_EX                          128
-# define EVP_F_EVP_ENCRYPTFINAL_EX                        127
-# define EVP_F_EVP_ENCRYPTUPDATE                          167
-# define EVP_F_EVP_MD_CTX_COPY_EX                         110
-# define EVP_F_EVP_MD_SIZE                                162
-# define EVP_F_EVP_OPENINIT                               102
-# define EVP_F_EVP_PBE_ALG_ADD                            115
-# define EVP_F_EVP_PBE_ALG_ADD_TYPE                       160
-# define EVP_F_EVP_PBE_CIPHERINIT                         116
-# define EVP_F_EVP_PBE_SCRYPT                             181
-# define EVP_F_EVP_PKCS82PKEY                             111
-# define EVP_F_EVP_PKEY2PKCS8                             113
-# define EVP_F_EVP_PKEY_COPY_PARAMETERS                   103
-# define EVP_F_EVP_PKEY_CTX_CTRL                          137
-# define EVP_F_EVP_PKEY_CTX_CTRL_STR                      150
-# define EVP_F_EVP_PKEY_CTX_DUP                           156
-# define EVP_F_EVP_PKEY_DECRYPT                           104
-# define EVP_F_EVP_PKEY_DECRYPT_INIT                      138
-# define EVP_F_EVP_PKEY_DECRYPT_OLD                       151
-# define EVP_F_EVP_PKEY_DERIVE                            153
-# define EVP_F_EVP_PKEY_DERIVE_INIT                       154
-# define EVP_F_EVP_PKEY_DERIVE_SET_PEER                   155
-# define EVP_F_EVP_PKEY_ENCRYPT                           105
-# define EVP_F_EVP_PKEY_ENCRYPT_INIT                      139
-# define EVP_F_EVP_PKEY_ENCRYPT_OLD                       152
-# define EVP_F_EVP_PKEY_GET0_DH                           119
-# define EVP_F_EVP_PKEY_GET0_DSA                          120
-# define EVP_F_EVP_PKEY_GET0_EC_KEY                       131
-# define EVP_F_EVP_PKEY_GET0_HMAC                         183
-# define EVP_F_EVP_PKEY_GET0_RSA                          121
-# define EVP_F_EVP_PKEY_KEYGEN                            146
-# define EVP_F_EVP_PKEY_KEYGEN_INIT                       147
-# define EVP_F_EVP_PKEY_NEW                               106
-# define EVP_F_EVP_PKEY_PARAMGEN                          148
-# define EVP_F_EVP_PKEY_PARAMGEN_INIT                     149
-# define EVP_F_EVP_PKEY_SIGN                              140
-# define EVP_F_EVP_PKEY_SIGN_INIT                         141
-# define EVP_F_EVP_PKEY_VERIFY                            142
-# define EVP_F_EVP_PKEY_VERIFY_INIT                       143
-# define EVP_F_EVP_PKEY_VERIFY_RECOVER                    144
-# define EVP_F_EVP_PKEY_VERIFY_RECOVER_INIT               145
-# define EVP_F_EVP_SIGNFINAL                              107
-# define EVP_F_EVP_VERIFYFINAL                            108
-# define EVP_F_INT_CTX_NEW                                157
-# define EVP_F_PKCS5_PBE_KEYIVGEN                         117
-# define EVP_F_PKCS5_V2_PBE_KEYIVGEN                      118
-# define EVP_F_PKCS5_V2_PBKDF2_KEYIVGEN                   164
-# define EVP_F_PKCS5_V2_SCRYPT_KEYIVGEN                   180
-# define EVP_F_PKEY_SET_TYPE                              158
-# define EVP_F_RC2_MAGIC_TO_METH                          109
-# define EVP_F_RC5_CTRL                                   125
-
-/* Reason codes. */
-# define EVP_R_AES_KEY_SETUP_FAILED                       143
-# define EVP_R_BAD_DECRYPT                                100
-# define EVP_R_BUFFER_TOO_SMALL                           155
-# define EVP_R_CAMELLIA_KEY_SETUP_FAILED                  157
-# define EVP_R_CIPHER_PARAMETER_ERROR                     122
-# define EVP_R_COMMAND_NOT_SUPPORTED                      147
-# define EVP_R_COPY_ERROR                                 173
-# define EVP_R_CTRL_NOT_IMPLEMENTED                       132
-# define EVP_R_CTRL_OPERATION_NOT_IMPLEMENTED             133
-# define EVP_R_DATA_NOT_MULTIPLE_OF_BLOCK_LENGTH          138
-# define EVP_R_DECODE_ERROR                               114
-# define EVP_R_DIFFERENT_KEY_TYPES                        101
-# define EVP_R_DIFFERENT_PARAMETERS                       153
-# define EVP_R_ERROR_LOADING_SECTION                      165
-# define EVP_R_ERROR_SETTING_FIPS_MODE                    166
-# define EVP_R_EXPECTING_AN_HMAC_KEY                      174
-# define EVP_R_EXPECTING_AN_RSA_KEY                       127
-# define EVP_R_EXPECTING_A_DH_KEY                         128
-# define EVP_R_EXPECTING_A_DSA_KEY                        129
-# define EVP_R_EXPECTING_A_EC_KEY                         142
-# define EVP_R_FIPS_MODE_NOT_SUPPORTED                    167
-# define EVP_R_ILLEGAL_SCRYPT_PARAMETERS                  171
-# define EVP_R_INITIALIZATION_ERROR                       134
-# define EVP_R_INPUT_NOT_INITIALIZED                      111
-# define EVP_R_INVALID_DIGEST                             152
-# define EVP_R_INVALID_FIPS_MODE                          168
-# define EVP_R_INVALID_KEY_LENGTH                         130
-# define EVP_R_INVALID_OPERATION                          148
-# define EVP_R_KEYGEN_FAILURE                             120
-# define EVP_R_MEMORY_LIMIT_EXCEEDED                      172
-# define EVP_R_MESSAGE_DIGEST_IS_NULL                     159
-# define EVP_R_METHOD_NOT_SUPPORTED                       144
-# define EVP_R_MISSING_PARAMETERS                         103
-# define EVP_R_NO_CIPHER_SET                              131
-# define EVP_R_NO_DEFAULT_DIGEST                          158
-# define EVP_R_NO_DIGEST_SET                              139
-# define EVP_R_NO_KEY_SET                                 154
-# define EVP_R_NO_OPERATION_SET                           149
-# define EVP_R_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE   150
-# define EVP_R_OPERATON_NOT_INITIALIZED                   151
-# define EVP_R_PARTIALLY_OVERLAPPING                      162
-# define EVP_R_PRIVATE_KEY_DECODE_ERROR                   145
-# define EVP_R_PRIVATE_KEY_ENCODE_ERROR                   146
-# define EVP_R_PUBLIC_KEY_NOT_RSA                         106
-# define EVP_R_UNKNOWN_CIPHER                             160
-# define EVP_R_UNKNOWN_DIGEST                             161
-# define EVP_R_UNKNOWN_OPTION                             169
-# define EVP_R_UNKNOWN_PBE_ALGORITHM                      121
-# define EVP_R_UNSUPPORTED_NUMBER_OF_ROUNDS               135
-# define EVP_R_UNSUPPORTED_ALGORITHM                      156
-# define EVP_R_UNSUPPORTED_CIPHER                         107
-# define EVP_R_UNSUPPORTED_KEYLENGTH                      123
-# define EVP_R_UNSUPPORTED_KEY_DERIVATION_FUNCTION        124
-# define EVP_R_UNSUPPORTED_KEY_SIZE                       108
-# define EVP_R_UNSUPPORTED_PRF                            125
-# define EVP_R_UNSUPPORTED_PRIVATE_KEY_ALGORITHM          118
-# define EVP_R_UNSUPPORTED_SALT_TYPE                      126
-# define EVP_R_WRAP_MODE_NOT_ALLOWED                      170
-# define EVP_R_WRONG_FINAL_BLOCK_LENGTH                   109
 
 # ifdef  __cplusplus
 }

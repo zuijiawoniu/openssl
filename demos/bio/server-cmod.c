@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2015-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -14,6 +14,7 @@
 
 #include <stdio.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/conf.h>
@@ -25,19 +26,14 @@ int main(int argc, char *argv[])
     BIO *in = NULL;
     BIO *ssl_bio, *tmp;
     SSL_CTX *ctx;
-    int ret = 1, i;
+    int ret = EXIT_FAILURE, i;
 
-    SSL_load_error_strings();
-
-    /* Add ciphers and message digests */
-    OpenSSL_add_ssl_algorithms();
+    ctx = SSL_CTX_new(TLS_server_method());
 
     if (CONF_modules_load_file("cmod.cnf", "testapp", 0) <= 0) {
         fprintf(stderr, "Error processing config file\n");
         goto err;
     }
-
-    ctx = SSL_CTX_new(TLS_server_method());
 
     if (SSL_CTX_config(ctx, "server") == 0) {
         fprintf(stderr, "Error configuring server.\n");
@@ -89,12 +85,10 @@ int main(int argc, char *argv[])
         fflush(stdout);
     }
 
-    ret = 0;
+    ret = EXIT_SUCCESS;
  err:
-    if (ret) {
+    if (ret != EXIT_SUCCESS)
         ERR_print_errors_fp(stderr);
-    }
     BIO_free(in);
-    exit(ret);
-    return (!ret);
+    return ret;
 }

@@ -1,16 +1,11 @@
 /*
  * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
- */
-
-/* ====================================================================
- * Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
- * ECC cipher suite support in OpenSSL originally developed by
- * SUN MICROSYSTEMS, INC., and contributed to the OpenSSL project.
  */
 
 #ifndef HEADER_SSL3_H
@@ -170,7 +165,8 @@ extern "C" {
  * practice the value is lower than this. The overhead is the maximum number
  * of padding bytes (256) plus the mac size.
  */
-# define SSL3_RT_MAX_ENCRYPTED_OVERHEAD  (256 + SSL3_RT_MAX_MD_SIZE)
+# define SSL3_RT_MAX_ENCRYPTED_OVERHEAD        (256 + SSL3_RT_MAX_MD_SIZE)
+# define SSL3_RT_MAX_TLS13_ENCRYPTED_OVERHEAD  256
 
 /*
  * OpenSSL currently only uses a padding length of at most one block so the
@@ -186,12 +182,14 @@ extern "C" {
 #  define SSL3_RT_MAX_COMPRESSED_LENGTH           SSL3_RT_MAX_PLAIN_LENGTH
 # else
 #  define SSL3_RT_MAX_COMPRESSED_LENGTH   \
-                (SSL3_RT_MAX_PLAIN_LENGTH+SSL3_RT_MAX_COMPRESSED_OVERHEAD)
+            (SSL3_RT_MAX_PLAIN_LENGTH+SSL3_RT_MAX_COMPRESSED_OVERHEAD)
 # endif
 # define SSL3_RT_MAX_ENCRYPTED_LENGTH    \
-                (SSL3_RT_MAX_ENCRYPTED_OVERHEAD+SSL3_RT_MAX_COMPRESSED_LENGTH)
+            (SSL3_RT_MAX_ENCRYPTED_OVERHEAD+SSL3_RT_MAX_COMPRESSED_LENGTH)
+# define SSL3_RT_MAX_TLS13_ENCRYPTED_LENGTH \
+            (SSL3_RT_MAX_PLAIN_LENGTH + SSL3_RT_MAX_TLS13_ENCRYPTED_OVERHEAD)
 # define SSL3_RT_MAX_PACKET_SIZE         \
-                (SSL3_RT_MAX_ENCRYPTED_LENGTH+SSL3_RT_HEADER_LENGTH)
+            (SSL3_RT_MAX_ENCRYPTED_LENGTH+SSL3_RT_HEADER_LENGTH)
 
 # define SSL3_MD_CLIENT_FINISHED_CONST   "\x43\x4C\x4E\x54"
 # define SSL3_MD_SERVER_FINISHED_CONST   "\x53\x52\x56\x52"
@@ -220,8 +218,9 @@ extern "C" {
 # define TLS1_RT_CRYPTO_IV               (TLS1_RT_CRYPTO | 0x7)
 # define TLS1_RT_CRYPTO_FIXED_IV         (TLS1_RT_CRYPTO | 0x8)
 
-/* Pseudo content type for SSL/TLS header info */
+/* Pseudo content types for SSL/TLS header info */
 # define SSL3_RT_HEADER                  0x100
+# define SSL3_RT_INNER_CONTENT_TYPE      0x101
 
 # define SSL3_AL_WARNING                 1
 # define SSL3_AL_FATAL                   2
@@ -256,6 +255,7 @@ extern "C" {
  */
 # define SSL3_CT_NUMBER                  9
 
+/* No longer used as of OpenSSL 1.1.1 */
 # define SSL3_FLAGS_NO_RENEGOTIATE_CIPHERS       0x0001
 
 /* Removed from OpenSSL 1.1.0 */
@@ -264,15 +264,21 @@ extern "C" {
 # define TLS1_FLAGS_SKIP_CERT_VERIFY             0x0010
 
 /* Set if we encrypt then mac instead of usual mac then encrypt */
-# define TLS1_FLAGS_ENCRYPT_THEN_MAC             0x0100
+# define TLS1_FLAGS_ENCRYPT_THEN_MAC_READ        0x0100
+# define TLS1_FLAGS_ENCRYPT_THEN_MAC             TLS1_FLAGS_ENCRYPT_THEN_MAC_READ
 
 /* Set if extended master secret extension received from peer */
 # define TLS1_FLAGS_RECEIVED_EXTMS               0x0200
+
+# define TLS1_FLAGS_ENCRYPT_THEN_MAC_WRITE       0x0400
 
 # define SSL3_MT_HELLO_REQUEST                   0
 # define SSL3_MT_CLIENT_HELLO                    1
 # define SSL3_MT_SERVER_HELLO                    2
 # define SSL3_MT_NEWSESSION_TICKET               4
+# define SSL3_MT_END_OF_EARLY_DATA               5
+# define SSL3_MT_HELLO_RETRY_REQUEST             6
+# define SSL3_MT_ENCRYPTED_EXTENSIONS            8
 # define SSL3_MT_CERTIFICATE                     11
 # define SSL3_MT_SERVER_KEY_EXCHANGE             12
 # define SSL3_MT_CERTIFICATE_REQUEST             13
@@ -281,10 +287,12 @@ extern "C" {
 # define SSL3_MT_CLIENT_KEY_EXCHANGE             16
 # define SSL3_MT_FINISHED                        20
 # define SSL3_MT_CERTIFICATE_STATUS              22
+# define SSL3_MT_KEY_UPDATE                      24
 # ifndef OPENSSL_NO_NEXTPROTONEG
-#  define SSL3_MT_NEXT_PROTO                      67
+#  define SSL3_MT_NEXT_PROTO                     67
 # endif
-# define DTLS1_MT_HELLO_VERIFY_REQUEST    3
+# define SSL3_MT_MESSAGE_HASH                    254
+# define DTLS1_MT_HELLO_VERIFY_REQUEST           3
 
 /* Dummy message type for handling CCS like a normal handshake message */
 # define SSL3_MT_CHANGE_CIPHER_SPEC              0x0101
@@ -292,10 +300,13 @@ extern "C" {
 # define SSL3_MT_CCS                             1
 
 /* These are used when changing over to a new cipher */
-# define SSL3_CC_READ            0x01
-# define SSL3_CC_WRITE           0x02
-# define SSL3_CC_CLIENT          0x10
-# define SSL3_CC_SERVER          0x20
+# define SSL3_CC_READ            0x001
+# define SSL3_CC_WRITE           0x002
+# define SSL3_CC_CLIENT          0x010
+# define SSL3_CC_SERVER          0x020
+# define SSL3_CC_EARLY           0x040
+# define SSL3_CC_HANDSHAKE       0x080
+# define SSL3_CC_APPLICATION     0x100
 # define SSL3_CHANGE_CIPHER_CLIENT_WRITE (SSL3_CC_CLIENT|SSL3_CC_WRITE)
 # define SSL3_CHANGE_CIPHER_SERVER_READ  (SSL3_CC_SERVER|SSL3_CC_READ)
 # define SSL3_CHANGE_CIPHER_CLIENT_READ  (SSL3_CC_CLIENT|SSL3_CC_READ)

@@ -120,6 +120,7 @@ static int do_blob_header(const unsigned char **in, unsigned int length,
 
     case MS_DSS1MAGIC:
         *pisdss = 1;
+        /* fall thru */
     case MS_RSA1MAGIC:
         if (*pispub == 0) {
             PEMerr(PEM_F_DO_BLOB_HEADER, PEM_R_EXPECTING_PRIVATE_KEY_BLOB);
@@ -129,6 +130,7 @@ static int do_blob_header(const unsigned char **in, unsigned int length,
 
     case MS_DSS2MAGIC:
         *pisdss = 1;
+        /* fall thru */
     case MS_RSA2MAGIC:
         if (*pispub == 1) {
             PEMerr(PEM_F_DO_BLOB_HEADER, PEM_R_EXPECTING_PUBLIC_KEY_BLOB);
@@ -548,7 +550,7 @@ static void write_rsa(unsigned char **out, RSA *rsa, int ispub)
     hnbyte = (RSA_bits(rsa) + 15) >> 4;
     RSA_get0_key(rsa, &n, &e, &d);
     write_lebn(out, e, 4);
-    write_lebn(out, n, -1);
+    write_lebn(out, n, nbyte);
     if (ispub)
         return;
     RSA_get0_factors(rsa, &p, &q);

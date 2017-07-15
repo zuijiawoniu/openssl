@@ -55,6 +55,8 @@ extern char *default_config_file;
 extern BIO *bio_in;
 extern BIO *bio_out;
 extern BIO *bio_err;
+extern const unsigned char tls13_aes128gcmsha256_id[];
+extern const unsigned char tls13_aes256gcmsha384_id[];
 BIO *dup_bio_in(int format);
 BIO *dup_bio_out(int format);
 BIO *dup_bio_err(int format);
@@ -210,18 +212,20 @@ int set_cert_times(X509 *x, const char *startdate, const char *enddate,
 # define OPT_S_ENUM \
         OPT_S__FIRST=3000, \
         OPT_S_NOSSL3, OPT_S_NOTLS1, OPT_S_NOTLS1_1, OPT_S_NOTLS1_2, \
-        OPT_S_BUGS, OPT_S_NO_COMP, OPT_S_NOTICKET, \
+        OPT_S_NOTLS1_3, OPT_S_BUGS, OPT_S_NO_COMP, OPT_S_NOTICKET, \
         OPT_S_SERVERPREF, OPT_S_LEGACYRENEG, OPT_S_LEGACYCONN, \
-        OPT_S_ONRESUMP, OPT_S_NOLEGACYCONN, OPT_S_STRICT, OPT_S_SIGALGS, \
-        OPT_S_CLIENTSIGALGS, OPT_S_CURVES, OPT_S_NAMEDCURVE, OPT_S_CIPHER, \
-        OPT_S_DHPARAM, OPT_S_DEBUGBROKE, OPT_S_COMP, \
-        OPT_S__LAST
+        OPT_S_ONRESUMP, OPT_S_NOLEGACYCONN, OPT_S_ALLOW_NO_DHE_KEX, \
+        OPT_S_STRICT, OPT_S_SIGALGS, OPT_S_CLIENTSIGALGS, OPT_S_GROUPS, \
+        OPT_S_CURVES, OPT_S_NAMEDCURVE, OPT_S_CIPHER, OPT_S_DHPARAM, \
+        OPT_S_RECORD_PADDING, OPT_S_DEBUGBROKE, OPT_S_COMP, \
+        OPT_S_NO_RENEGOTIATION, OPT_S__LAST
 
 # define OPT_S_OPTIONS \
         {"no_ssl3", OPT_S_NOSSL3, '-',"Just disable SSLv3" }, \
         {"no_tls1", OPT_S_NOTLS1, '-', "Just disable TLSv1"}, \
         {"no_tls1_1", OPT_S_NOTLS1_1, '-', "Just disable TLSv1.1" }, \
         {"no_tls1_2", OPT_S_NOTLS1_2, '-', "Just disable TLSv1.2"}, \
+        {"no_tls1_3", OPT_S_NOTLS1_3, '-', "Just disable TLSv1.3"}, \
         {"bugs", OPT_S_BUGS, '-', "Turn on SSL bug compatibility"}, \
         {"no_comp", OPT_S_NO_COMP, '-', "Disable SSL/TLS compression (default)" }, \
         {"comp", OPT_S_COMP, '-', "Use SSL/TLS-level compression" }, \
@@ -230,12 +234,16 @@ int set_cert_times(X509 *x, const char *startdate, const char *enddate,
         {"serverpref", OPT_S_SERVERPREF, '-', "Use server's cipher preferences"}, \
         {"legacy_renegotiation", OPT_S_LEGACYRENEG, '-', \
             "Enable use of legacy renegotiation (dangerous)"}, \
+        {"no_renegotiation", OPT_S_NO_RENEGOTIATION, '-', \
+            "Disable all renegotiation."}, \
         {"legacy_server_connect", OPT_S_LEGACYCONN, '-', \
             "Allow initial connection to servers that don't support RI"}, \
         {"no_resumption_on_reneg", OPT_S_ONRESUMP, '-', \
             "Disallow session resumption on renegotiation"}, \
         {"no_legacy_server_connect", OPT_S_NOLEGACYCONN, '-', \
             "Disallow initial connection to servers that don't support RI"}, \
+        {"allow_no_dhe_kex", OPT_S_ALLOW_NO_DHE_KEX, '-', \
+            "In TLSv1.3 allow non-(ec)dhe based key exchange on resumption"}, \
         {"strict", OPT_S_STRICT, '-', \
             "Enforce strict certificate checks as per TLS standard"}, \
         {"sigalgs", OPT_S_SIGALGS, 's', \
@@ -243,15 +251,20 @@ int set_cert_times(X509 *x, const char *startdate, const char *enddate,
         {"client_sigalgs", OPT_S_CLIENTSIGALGS, 's', \
             "Signature algorithms to support for client certificate" \
             " authentication (colon-separated list)" }, \
+        {"groups", OPT_S_GROUPS, 's', \
+            "Groups to advertise (colon-separated list)" }, \
         {"curves", OPT_S_CURVES, 's', \
-            "Elliptic curves to advertise (colon-separated list)" }, \
+            "Groups to advertise (colon-separated list)" }, \
         {"named_curve", OPT_S_NAMEDCURVE, 's', \
             "Elliptic curve used for ECDHE (server-side only)" }, \
         {"cipher", OPT_S_CIPHER, 's', "Specify cipher list to be used"}, \
         {"dhparam", OPT_S_DHPARAM, '<', \
             "DH parameter file to use, in cert file if not specified"}, \
+        {"record_padding", OPT_S_RECORD_PADDING, 's', \
+            "Block size to pad TLS 1.3 records to."}, \
         {"debug_broken_protocol", OPT_S_DEBUGBROKE, '-', \
             "Perform all sorts of protocol violations for testing purposes"}
+
 
 # define OPT_S_CASES \
         OPT_S__FIRST: case OPT_S__LAST: break; \
@@ -259,6 +272,7 @@ int set_cert_times(X509 *x, const char *startdate, const char *enddate,
         case OPT_S_NOTLS1: \
         case OPT_S_NOTLS1_1: \
         case OPT_S_NOTLS1_2: \
+        case OPT_S_NOTLS1_3: \
         case OPT_S_BUGS: \
         case OPT_S_NO_COMP: \
         case OPT_S_COMP: \
@@ -268,18 +282,22 @@ int set_cert_times(X509 *x, const char *startdate, const char *enddate,
         case OPT_S_LEGACYCONN: \
         case OPT_S_ONRESUMP: \
         case OPT_S_NOLEGACYCONN: \
+        case OPT_S_ALLOW_NO_DHE_KEX: \
         case OPT_S_STRICT: \
         case OPT_S_SIGALGS: \
         case OPT_S_CLIENTSIGALGS: \
+        case OPT_S_GROUPS: \
         case OPT_S_CURVES: \
         case OPT_S_NAMEDCURVE: \
         case OPT_S_CIPHER: \
         case OPT_S_DHPARAM: \
+        case OPT_S_RECORD_PADDING: \
+        case OPT_S_NO_RENEGOTIATION: \
         case OPT_S_DEBUGBROKE
 
 #define IS_NO_PROT_FLAG(o) \
  (o == OPT_S_NOSSL3 || o == OPT_S_NOTLS1 || o == OPT_S_NOTLS1_1 \
-  || o == OPT_S_NOTLS1_2)
+  || o == OPT_S_NOTLS1_2 || o == OPT_S_NOTLS1_3)
 
 /*
  * Option parsing.
@@ -292,7 +310,7 @@ typedef struct options_st {
     /*
      * value type: - no value (also the value zero), n number, p positive
      * number, u unsigned, l long, s string, < input file, > output file,
-     * f any format, F der/pem format , E der/pem/engine format identifier.
+     * f any format, F der/pem format, E der/pem/engine format identifier.
      * l, n and u include zero; p does not.
      */
     int valtype;
@@ -387,6 +405,7 @@ int password_callback(char *buf, int bufsiz, int verify, PW_CB_DATA *cb_data);
 
 int setup_ui_method(void);
 void destroy_ui_method(void);
+const UI_METHOD *get_ui_method(void);
 
 int chopup_args(ARGS *arg, char *buf);
 # ifdef HEADER_X509_H
@@ -397,6 +416,8 @@ void print_name(BIO *out, const char *title, X509_NAME *nm,
 void print_bignum_var(BIO *, const BIGNUM *, const char*,
                       int, unsigned char *);
 void print_array(BIO *, const char *, int, const unsigned char *);
+int set_nameopt(const char *arg);
+unsigned long get_nameopt(void);
 int set_cert_ex(unsigned long *flags, const char *arg);
 int set_name_ex(unsigned long *flags, const char *arg);
 int set_ext_copy(int *copy_type, const char *arg);
@@ -430,11 +451,9 @@ __owur int ctx_set_ctlog_list_file(SSL_CTX *ctx, const char *path);
 
 #endif
 
-# ifdef OPENSSL_NO_ENGINE
-#  define setup_engine(engine, debug) NULL
-# else
 ENGINE *setup_engine(const char *engine, int debug);
-# endif
+void release_engine(ENGINE *e);
+
 # ifndef OPENSSL_NO_OCSP
 OCSP_RESPONSE *process_responder(OCSP_REQUEST *req,
                                  const char *host, const char *path,
@@ -456,9 +475,10 @@ int unpack_revinfo(ASN1_TIME **prevtm, int *preason, ASN1_OBJECT **phold,
                                  * disabled */
 # define DB_NUMBER       6
 
-# define DB_TYPE_REV     'R'
-# define DB_TYPE_EXP     'E'
-# define DB_TYPE_VAL     'V'
+# define DB_TYPE_REV     'R'    /* Revoked  */
+# define DB_TYPE_EXP     'E'    /* Expired  */
+# define DB_TYPE_VAL     'V'    /* Valid ; inserted with: ca ... -valid */
+# define DB_TYPE_SUSP    'S'    /* Suspended  */
 
 typedef struct db_attr_st {
     int unique_subject;
@@ -501,9 +521,9 @@ int do_X509_REQ_sign(X509_REQ *x, EVP_PKEY *pkey, const EVP_MD *md,
                      STACK_OF(OPENSSL_STRING) *sigopts);
 int do_X509_CRL_sign(X509_CRL *x, EVP_PKEY *pkey, const EVP_MD *md,
                      STACK_OF(OPENSSL_STRING) *sigopts);
-# ifndef OPENSSL_NO_PSK
+
 extern char *psk_key;
-# endif
+
 
 unsigned char *next_protos_parse(size_t *outlen, const char *in);
 
@@ -548,12 +568,16 @@ void store_setup_crl_download(X509_STORE *st);
 
 int app_isdir(const char *);
 int app_access(const char *, int flag);
+int fileno_stdin(void);
+int fileno_stdout(void);
 int raw_read_stdin(void *, int);
 int raw_write_stdout(const void *, int);
 
 # define TM_START        0
 # define TM_STOP         1
 double app_tminterval(int stop, int usertime);
+
+void make_uppercase(char *string);
 
 typedef struct verify_options_st {
     int depth;

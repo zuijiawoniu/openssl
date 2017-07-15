@@ -23,6 +23,8 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <internal/thread_once.h>
+#include <internal/dso.h>
+#include <internal/store.h>
 
 static int stopped = 0;
 
@@ -42,7 +44,10 @@ static struct thread_local_inits_st *ossl_init_get_thread_local(int alloc)
 
     if (local == NULL && alloc) {
         local = OPENSSL_zalloc(sizeof *local);
-        CRYPTO_THREAD_set_local(&threadstopkey, local);
+        if (local != NULL && !CRYPTO_THREAD_set_local(&threadstopkey, local)) {
+            OPENSSL_free(local);
+            return NULL;
+        }
     }
     if (!alloc) {
         CRYPTO_THREAD_set_local(&threadstopkey, NULL);
@@ -67,6 +72,9 @@ DEFINE_RUN_ONCE_STATIC(ossl_init_base)
 #ifdef OPENSSL_INIT_DEBUG
     fprintf(stderr, "OPENSSL_INIT: ossl_init_base: Setting up stop handlers\n");
 #endif
+#ifndef OPENSSL_NO_CRYPTO_MDEBUG
+    ossl_malloc_setup_failures();
+#endif
     /*
      * We use a dummy thread local key here. We use the destructor to detect
      * when the thread is going to stop (where that feature is available)
@@ -78,7 +86,44 @@ DEFINE_RUN_ONCE_STATIC(ossl_init_base)
     if ((init_lock = CRYPTO_THREAD_lock_new()) == NULL)
         return 0;
     OPENSSL_cpuid_setup();
+
+    /*
+     * BIG FAT WARNING!
+     * Everything needed to be initialized in this function before threads
+     * come along MUST happen before base_inited is set to 1, or we will
+     * see race conditions.
+     */
     base_inited = 1;
+
+#if !defined(OPENSSL_NO_DSO) && !defined(OPENSSL_USE_NODELETE)
+# ifdef DSO_WIN32
+    {
+        HMODULE handle = NULL;
+        BOOL ret;
+
+        /* We don't use the DSO route for WIN32 because there is a better way */
+        ret = GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                                | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                                (void *)&base_inited, &handle);
+
+        return (ret == TRUE) ? 1 : 0;
+    }
+# else
+    /*
+     * Deliberately leak a reference to ourselves. This will force the library
+     * to remain loaded until the atexit() handler is run at process exit.
+     */
+    {
+        DSO *dso = NULL;
+
+        ERR_set_mark();
+        dso = DSO_dsobyaddr(&base_inited, DSO_FLAG_NO_UNLOAD_ON_FREE);
+        DSO_free(dso);
+        ERR_pop_to_mark();
+    }
+# endif
+#endif
+
     return 1;
 }
 
@@ -103,8 +148,8 @@ DEFINE_RUN_ONCE_STATIC(ossl_init_load_crypto_strings)
                     "err_load_crypto_strings_int()\n");
 # endif
     ret = err_load_crypto_strings_int();
-#endif
     load_crypto_strings_inited = 1;
+#endif
     return ret;
 }
 
@@ -197,16 +242,15 @@ DEFINE_RUN_ONCE_STATIC(ossl_init_engine_openssl)
     engine_load_openssl_int();
     return 1;
 }
-# if !defined(OPENSSL_NO_HW) && \
-    (defined(__OpenBSD__) || defined(__FreeBSD__) || defined(HAVE_CRYPTODEV))
-static CRYPTO_ONCE engine_cryptodev = CRYPTO_ONCE_STATIC_INIT;
-DEFINE_RUN_ONCE_STATIC(ossl_init_engine_cryptodev)
+# ifndef OPENSSL_NO_DEVCRYPTOENG
+static CRYPTO_ONCE engine_devcrypto = CRYPTO_ONCE_STATIC_INIT;
+DEFINE_RUN_ONCE_STATIC(ossl_init_engine_devcrypto)
 {
 #  ifdef OPENSSL_INIT_DEBUG
-    fprintf(stderr, "OPENSSL_INIT: ossl_init_engine_cryptodev: "
-                    "engine_load_cryptodev_int()\n");
+    fprintf(stderr, "OPENSSL_INIT: ossl_init_engine_devcrypto: "
+                    "engine_load_devcrypto_int()\n");
 #  endif
-    engine_load_cryptodev_int();
+    engine_load_devcrypto_int();
     return 1;
 }
 # endif
@@ -318,7 +362,12 @@ void OPENSSL_thread_stop(void)
 
 int ossl_init_thread_start(uint64_t opts)
 {
-    struct thread_local_inits_st *locals = ossl_init_get_thread_local(1);
+    struct thread_local_inits_st *locals;
+
+    if (!OPENSSL_init_crypto(0, NULL))
+        return 0;
+
+    locals = ossl_init_get_thread_local(1);
 
     if (locals == NULL)
         return 0;
@@ -443,6 +492,7 @@ void OPENSSL_cleanup(void)
 #ifndef OPENSSL_NO_ENGINE
     engine_cleanup_int();
 #endif
+    ossl_store_cleanup_int();
     crypto_cleanup_all_ex_data_int();
     bio_cleanup();
     evp_cleanup_int();
@@ -474,7 +524,7 @@ int OPENSSL_init_crypto(uint64_t opts, const OPENSSL_INIT_SETTINGS *settings)
         return 0;
     }
 
-    if (!RUN_ONCE(&base, ossl_init_base))
+    if (!base_inited && !RUN_ONCE(&base, ossl_init_base))
         return 0;
 
     if ((opts & OPENSSL_INIT_NO_LOAD_CRYPTO_STRINGS)
@@ -502,6 +552,10 @@ int OPENSSL_init_crypto(uint64_t opts, const OPENSSL_INIT_SETTINGS *settings)
             && !RUN_ONCE(&add_all_digests, ossl_init_add_all_digests))
         return 0;
 
+    if ((opts & OPENSSL_INIT_ATFORK)
+            && !openssl_init_fork_handlers())
+        return 0;
+
     if ((opts & OPENSSL_INIT_NO_LOAD_CONFIG)
             && !RUN_ONCE(&config, ossl_init_no_config))
         return 0;
@@ -524,10 +578,9 @@ int OPENSSL_init_crypto(uint64_t opts, const OPENSSL_INIT_SETTINGS *settings)
     if ((opts & OPENSSL_INIT_ENGINE_OPENSSL)
             && !RUN_ONCE(&engine_openssl, ossl_init_engine_openssl))
         return 0;
-# if !defined(OPENSSL_NO_HW) && \
-    (defined(__OpenBSD__) || defined(__FreeBSD__) || defined(HAVE_CRYPTODEV))
+# if !defined(OPENSSL_NO_HW) && !defined(OPENSSL_NO_DEVCRYPTOENG)
     if ((opts & OPENSSL_INIT_ENGINE_CRYPTODEV)
-            && !RUN_ONCE(&engine_cryptodev, ossl_init_engine_cryptodev))
+            && !RUN_ONCE(&engine_devcrypto, ossl_init_engine_devcrypto))
         return 0;
 # endif
 # ifndef OPENSSL_NO_RDRAND
@@ -575,6 +628,49 @@ int OPENSSL_atexit(void (*handler)(void))
 {
     OPENSSL_INIT_STOP *newhand;
 
+#if !defined(OPENSSL_NO_DSO) && !defined(OPENSSL_USE_NODELETE)
+    {
+        union {
+            void *sym;
+            void (*func)(void);
+        } handlersym;
+
+        handlersym.func = handler;
+# ifdef DSO_WIN32
+        {
+            HMODULE handle = NULL;
+            BOOL ret;
+
+            /*
+             * We don't use the DSO route for WIN32 because there is a better
+             * way
+             */
+            ret = GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                                    | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                                    handlersym.sym, &handle);
+
+            if (!ret)
+                return 0;
+        }
+# else
+        /*
+         * Deliberately leak a reference to the handler. This will force the
+         * library/code containing the handler to remain loaded until we run the
+         * atexit handler. If -znodelete has been used then this is
+         * unneccessary.
+         */
+        {
+            DSO *dso = NULL;
+
+            ERR_set_mark();
+            dso = DSO_dsobyaddr(handlersym.sym, DSO_FLAG_NO_UNLOAD_ON_FREE);
+            DSO_free(dso);
+            ERR_pop_to_mark();
+        }
+# endif
+    }
+#endif
+
     newhand = OPENSSL_malloc(sizeof(*newhand));
     if (newhand == NULL)
         return 0;
@@ -585,3 +681,28 @@ int OPENSSL_atexit(void (*handler)(void))
 
     return 1;
 }
+
+#ifdef OPENSSL_SYS_UNIX
+/*
+ * The following three functions are for OpenSSL developers.  This is
+ * where we set/reset state across fork (called via pthread_atfork when
+ * it exists, or manually by the application when it doesn't).
+ *
+ * WARNING!  If you put code in either OPENSSL_fork_parent or
+ * OPENSSL_fork_child, you MUST MAKE SURE that they are async-signal-
+ * safe.  See this link, for example:
+ *      http://man7.org/linux/man-pages/man7/signal-safety.7.html
+ */
+
+void OPENSSL_fork_prepare(void)
+{
+}
+
+void OPENSSL_fork_parent(void)
+{
+}
+
+void OPENSSL_fork_child(void)
+{
+}
+#endif

@@ -1,42 +1,12 @@
 /*
  * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
+ * Copyright 2005 Nokia. All rights reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
- */
-
-/* ====================================================================
- * Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
- * ECC cipher suite support in OpenSSL originally developed by
- * SUN MICROSYSTEMS, INC., and contributed to the OpenSSL project.
- */
-/* ====================================================================
- * Copyright 2005 Nokia. All rights reserved.
- *
- * The portions of the attached software ("Contribution") is developed by
- * Nokia Corporation and is licensed pursuant to the OpenSSL open source
- * license.
- *
- * The Contribution, originally written by Mika Kousa and Pasi Eronen of
- * Nokia Corporation, consists of the "PSK" (Pre-Shared Key) ciphersuites
- * support (see RFC 4279) to OpenSSL.
- *
- * No patent licenses or other rights except those expressly stated in
- * the OpenSSL open source license shall be deemed granted or received
- * expressly, by implication, estoppel, or otherwise.
- *
- * No assurances are provided by Nokia that the Contribution does not
- * infringe the patent or other intellectual property rights of any third
- * party or that the license provides you with all the necessary rights
- * to make use of the Contribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. IN
- * ADDITION TO THE DISCLAIMERS INCLUDED IN THE LICENSE, NOKIA
- * SPECIFICALLY DISCLAIMS ANY LIABILITY FOR CLAIMS BROUGHT BY YOU OR ANY
- * OTHER ENTITY BASED ON INFRINGEMENT OF INTELLECTUAL PROPERTY RIGHTS OR
- * OTHERWISE.
  */
 
 #include <stdio.h>
@@ -101,10 +71,7 @@ static const ssl_cipher_table ssl_cipher_table_cipher[SSL_ENC_NUM_IDX] = {
     {SSL_CHACHA20POLY1305, NID_chacha20_poly1305},
 };
 
-static const EVP_CIPHER *ssl_cipher_methods[SSL_ENC_NUM_IDX] = {
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL
-};
+static const EVP_CIPHER *ssl_cipher_methods[SSL_ENC_NUM_IDX];
 
 #define SSL_COMP_NULL_IDX       0
 #define SSL_COMP_ZLIB_IDX       1
@@ -153,7 +120,8 @@ static const ssl_cipher_table ssl_cipher_table_kx[] = {
     {SSL_kRSAPSK,   NID_kx_rsa_psk},
     {SSL_kPSK,      NID_kx_psk},
     {SSL_kSRP,      NID_kx_srp},
-    {SSL_kGOST,     NID_kx_gost}
+    {SSL_kGOST,     NID_kx_gost},
+    {SSL_kANY,      NID_kx_any}
 };
 
 static const ssl_cipher_table ssl_cipher_table_auth[] = {
@@ -164,7 +132,8 @@ static const ssl_cipher_table ssl_cipher_table_auth[] = {
     {SSL_aGOST01, NID_auth_gost01},
     {SSL_aGOST12, NID_auth_gost12},
     {SSL_aSRP,    NID_auth_srp},
-    {SSL_aNULL,   NID_auth_null}
+    {SSL_aNULL,   NID_auth_null},
+    {SSL_aANY,    NID_auth_any}
 };
 /* *INDENT-ON* */
 
@@ -175,7 +144,7 @@ static int ssl_cipher_info_find(const ssl_cipher_table * table,
     size_t i;
     for (i = 0; i < table_cnt; i++, table++) {
         if (table->mask == mask)
-            return i;
+            return (int)i;
     }
     return -1;
 }
@@ -197,7 +166,7 @@ static int ssl_mac_pkey_id[SSL_MD_NUM_IDX] = {
     EVP_PKEY_HMAC,
 };
 
-static int ssl_mac_secret_size[SSL_MD_NUM_IDX];
+static size_t ssl_mac_secret_size[SSL_MD_NUM_IDX];
 
 #define CIPHER_ADD      1
 #define CIPHER_KILL     2
@@ -372,7 +341,7 @@ static uint32_t disabled_mac_mask;
 static uint32_t disabled_mkey_mask;
 static uint32_t disabled_auth_mask;
 
-void ssl_load_ciphers(void)
+int ssl_load_ciphers(void)
 {
     size_t i;
     const ssl_cipher_table *t;
@@ -389,9 +358,6 @@ void ssl_load_ciphers(void)
                 disabled_enc_mask |= t->mask;
         }
     }
-#ifdef SSL_FORBID_ENULL
-    disabled_enc_mask |= SSL_eNULL;
-#endif
     disabled_mac_mask = 0;
     for (i = 0, t = ssl_cipher_table_mac; i < SSL_MD_NUM_IDX; i++, t++) {
         const EVP_MD *md = EVP_get_digestbynid(t->nid);
@@ -399,13 +365,17 @@ void ssl_load_ciphers(void)
         if (md == NULL) {
             disabled_mac_mask |= t->mask;
         } else {
-            ssl_mac_secret_size[i] = EVP_MD_size(md);
-            OPENSSL_assert(ssl_mac_secret_size[i] >= 0);
+            int tmpsize = EVP_MD_size(md);
+            if (!ossl_assert(tmpsize >= 0))
+                return 0;
+            ssl_mac_secret_size[i] = tmpsize;
         }
     }
     /* Make sure we can access MD5 and SHA1 */
-    OPENSSL_assert(ssl_digest_methods[SSL_MD_MD5_IDX] != NULL);
-    OPENSSL_assert(ssl_digest_methods[SSL_MD_SHA1_IDX] != NULL);
+    if (!ossl_assert(ssl_digest_methods[SSL_MD_MD5_IDX] != NULL))
+        return 0;
+    if (!ossl_assert(ssl_digest_methods[SSL_MD_SHA1_IDX] != NULL))
+        return 0;
 
     disabled_mkey_mask = 0;
     disabled_auth_mask = 0;
@@ -463,6 +433,8 @@ void ssl_load_ciphers(void)
     if ((disabled_auth_mask & (SSL_aGOST01 | SSL_aGOST12)) ==
         (SSL_aGOST01 | SSL_aGOST12))
         disabled_mkey_mask |= SSL_kGOST;
+
+    return 1;
 }
 
 #ifndef OPENSSL_NO_COMP
@@ -502,7 +474,7 @@ static int load_builtin_compressions(void)
 
 int ssl_cipher_get_evp(const SSL_SESSION *s, const EVP_CIPHER **enc,
                        const EVP_MD **md, int *mac_pkey_type,
-                       int *mac_secret_size, SSL_COMP **comp, int use_etm)
+                       size_t *mac_secret_size, SSL_COMP **comp, int use_etm)
 {
     int i;
     const SSL_CIPHER *c;
@@ -575,9 +547,6 @@ int ssl_cipher_get_evp(const SSL_SESSION *s, const EVP_CIPHER **enc,
 
         if (s->ssl_version >> 8 != TLS1_VERSION_MAJOR ||
             s->ssl_version < TLS1_VERSION)
-            return 1;
-
-        if (FIPS_mode())
             return 1;
 
         if (c->algorithm_enc == SSL_RC4 &&
@@ -687,8 +656,6 @@ static void ssl_cipher_collect_ciphers(const SSL_METHOD *ssl_method,
         /* drop those that use any of that is not available */
         if (c == NULL || !c->valid)
             continue;
-        if (FIPS_mode() && (c->algo_strength & SSL_FIPS))
-            continue;
         if ((c->algorithm_mkey & disabled_mkey) ||
             (c->algorithm_auth & disabled_auth) ||
             (c->algorithm_enc & disabled_enc) ||
@@ -706,9 +673,6 @@ static void ssl_cipher_collect_ciphers(const SSL_METHOD *ssl_method,
         co_list[co_list_num].prev = NULL;
         co_list[co_list_num].active = 0;
         co_list_num++;
-        /*
-         * if (!sk_push(ca_list,(char *)c)) goto err;
-         */
     }
 
     /*
@@ -859,6 +823,8 @@ static void ssl_cipher_apply_rule(uint32_t cipher_id, uint32_t alg_mkey,
                     cp->algorithm_enc, cp->algorithm_mac, cp->min_tls,
                     cp->algo_strength);
 #endif
+            if (cipher_id != 0 && (cipher_id != cp->id))
+                continue;
             if (alg_mkey && !(alg_mkey & cp->algorithm_mkey))
                 continue;
             if (alg_auth && !(alg_auth & cp->algorithm_auth))
@@ -1493,8 +1459,7 @@ STACK_OF(SSL_CIPHER) *ssl_create_cipher_list(const SSL_METHOD *ssl_method, STACK
      * to the resulting precedence to the STACK_OF(SSL_CIPHER).
      */
     for (curr = head; curr != NULL; curr = curr->next) {
-        if (curr->active
-            && (!FIPS_mode() || curr->cipher->algo_strength & SSL_FIPS)) {
+        if (curr->active) {
             if (!sk_SSL_CIPHER_push(cipherstack, curr->cipher)) {
                 OPENSSL_free(co_list);
                 sk_SSL_CIPHER_free(cipherstack);
@@ -1573,6 +1538,9 @@ char *SSL_CIPHER_description(const SSL_CIPHER *cipher, char *buf, int len)
     case SSL_kGOST:
         kx = "GOST";
         break;
+    case SSL_kANY:
+        kx = "any";
+        break;
     default:
         kx = "unknown";
     }
@@ -1599,9 +1567,12 @@ char *SSL_CIPHER_description(const SSL_CIPHER *cipher, char *buf, int len)
     case SSL_aGOST01:
         au = "GOST01";
         break;
-        /* New GOST ciphersuites have both SSL_aGOST12 and SSL_aGOST01 bits */
+    /* New GOST ciphersuites have both SSL_aGOST12 and SSL_aGOST01 bits */
     case (SSL_aGOST12 | SSL_aGOST01):
         au = "GOST12";
+        break;
+    case SSL_aANY:
+        au = "any";
         break;
     default:
         au = "unknown";
@@ -1827,7 +1798,7 @@ int SSL_COMP_add_compression_method(int id, COMP_METHOD *cm)
     if (id < 193 || id > 255) {
         SSLerr(SSL_F_SSL_COMP_ADD_COMPRESSION_METHOD,
                SSL_R_COMPRESSION_ID_NOT_WITHIN_PRIVATE_RANGE);
-        return 0;
+        return 1;
     }
 
     CRYPTO_mem_ctrl(CRYPTO_MEM_CHECK_DISABLE);
@@ -1868,32 +1839,30 @@ const char *SSL_COMP_get_name(const COMP_METHOD *comp)
 #endif
 }
 
-/* For a cipher return the index corresponding to the certificate type */
-int ssl_cipher_get_cert_index(const SSL_CIPHER *c)
+const char *SSL_COMP_get0_name(const SSL_COMP *comp)
 {
-    uint32_t alg_a;
-
-    alg_a = c->algorithm_auth;
-
-    if (alg_a & SSL_aECDSA)
-        return SSL_PKEY_ECC;
-    else if (alg_a & SSL_aDSS)
-        return SSL_PKEY_DSA_SIGN;
-    else if (alg_a & SSL_aRSA)
-        return SSL_PKEY_RSA_ENC;
-    else if (alg_a & SSL_aGOST12)
-        return SSL_PKEY_GOST_EC;
-    else if (alg_a & SSL_aGOST01)
-        return SSL_PKEY_GOST01;
-
-    return -1;
+#ifndef OPENSSL_NO_COMP
+    return comp->name;
+#else
+    return NULL;
+#endif
 }
 
-const SSL_CIPHER *ssl_get_cipher_by_char(SSL *ssl, const unsigned char *ptr)
+int SSL_COMP_get_id(const SSL_COMP *comp)
+{
+#ifndef OPENSSL_NO_COMP
+    return comp->id;
+#else
+    return -1;
+#endif
+}
+
+const SSL_CIPHER *ssl_get_cipher_by_char(SSL *ssl, const unsigned char *ptr,
+                                         int all)
 {
     const SSL_CIPHER *c = ssl->method->get_cipher_by_char(ptr);
 
-    if (c == NULL || c->valid == 0)
+    if (c == NULL || (!all && c->valid == 0))
         return NULL;
     return c;
 }
@@ -1941,7 +1910,77 @@ int SSL_CIPHER_get_auth_nid(const SSL_CIPHER *c)
     return ssl_cipher_table_auth[i].nid;
 }
 
+const EVP_MD *SSL_CIPHER_get_handshake_digest(const SSL_CIPHER *c)
+{
+    int idx = c->algorithm2 & SSL_HANDSHAKE_MAC_MASK;
+
+    if (idx < 0 || idx >= SSL_MD_NUM_IDX)
+        return NULL;
+    return ssl_digest_methods[idx];
+}
+
 int SSL_CIPHER_is_aead(const SSL_CIPHER *c)
 {
     return (c->algorithm_mac & SSL_AEAD) ? 1 : 0;
+}
+
+int ssl_cipher_get_overhead(const SSL_CIPHER *c, size_t *mac_overhead,
+                            size_t *int_overhead, size_t *blocksize,
+                            size_t *ext_overhead)
+{
+    size_t mac = 0, in = 0, blk = 0, out = 0;
+
+    /* Some hard-coded numbers for the CCM/Poly1305 MAC overhead
+     * because there are no handy #defines for those. */
+    if (c->algorithm_enc & SSL_AESGCM) {
+        out = EVP_GCM_TLS_EXPLICIT_IV_LEN + EVP_GCM_TLS_TAG_LEN;
+    } else if (c->algorithm_enc & (SSL_AES128CCM | SSL_AES256CCM)) {
+        out = EVP_CCM_TLS_EXPLICIT_IV_LEN + 16;
+    } else if (c->algorithm_enc & (SSL_AES128CCM8 | SSL_AES256CCM8)) {
+        out = EVP_CCM_TLS_EXPLICIT_IV_LEN + 8;
+    } else if (c->algorithm_enc & SSL_CHACHA20POLY1305) {
+        out = 16;
+    } else if (c->algorithm_mac & SSL_AEAD) {
+        /* We're supposed to have handled all the AEAD modes above */
+        return 0;
+    } else {
+        /* Non-AEAD modes. Calculate MAC/cipher overhead separately */
+        int digest_nid = SSL_CIPHER_get_digest_nid(c);
+        const EVP_MD *e_md = EVP_get_digestbynid(digest_nid);
+
+        if (e_md == NULL)
+            return 0;
+
+        mac = EVP_MD_size(e_md);
+        if (c->algorithm_enc != SSL_eNULL) {
+            int cipher_nid = SSL_CIPHER_get_cipher_nid(c);
+            const EVP_CIPHER *e_ciph = EVP_get_cipherbynid(cipher_nid);
+
+            /* If it wasn't AEAD or SSL_eNULL, we expect it to be a
+               known CBC cipher. */
+            if (e_ciph == NULL ||
+                EVP_CIPHER_mode(e_ciph) != EVP_CIPH_CBC_MODE)
+                return 0;
+
+            in = 1; /* padding length byte */
+            out = EVP_CIPHER_iv_length(e_ciph);
+            blk = EVP_CIPHER_block_size(e_ciph);
+        }
+    }
+
+    *mac_overhead = mac;
+    *int_overhead = in;
+    *blocksize = blk;
+    *ext_overhead = out;
+
+    return 1;
+}
+
+int ssl_cert_is_disabled(size_t idx)
+{
+    const SSL_CERT_LOOKUP *cl = ssl_cert_lookup_by_idx(idx);
+
+    if (cl == NULL || (cl->amask & disabled_auth_mask) != 0)
+        return 1;
+    return 0;
 }

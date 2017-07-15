@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -32,7 +32,7 @@ int BN_sqr(BIGNUM *r, const BIGNUM *a, BN_CTX *ctx)
     BN_CTX_start(ctx);
     rr = (a != r) ? r : BN_CTX_get(ctx);
     tmp = BN_CTX_get(ctx);
-    if (!rr || !tmp)
+    if (rr == NULL || tmp == NULL)
         goto err;
 
     max = 2 * al;               /* Non-zero (from above) */
@@ -90,8 +90,9 @@ int BN_sqr(BIGNUM *r, const BIGNUM *a, BN_CTX *ctx)
         rr->top = max - 1;
     else
         rr->top = max;
-    if (rr != r)
-        BN_copy(r, rr);
+    if (r != rr && BN_copy(r, rr) == NULL)
+        goto err;
+
     ret = 1;
  err:
     bn_check_top(rr);

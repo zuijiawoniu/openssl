@@ -1,15 +1,11 @@
 /*
- * Copyright 2015-2016 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2015-2017 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2004-2014, Akamai Technologies. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
- */
-
-/*
- * Copyright 2004-2014, Akamai Technologies. All Rights Reserved.
- * This file is distributed under the terms of the OpenSSL license.
  */
 
 /*
@@ -31,6 +27,11 @@
 # include <unistd.h>
 # include <sys/types.h>
 # include <sys/mman.h>
+# if defined(OPENSSL_SYS_LINUX)
+#  include <sys/syscall.h>
+#  include <linux/mman.h>
+#  include <errno.h>
+# endif
 # include <sys/param.h>
 # include <sys/stat.h>
 # include <fcntl.h>
@@ -52,8 +53,8 @@ static CRYPTO_RWLOCK *sec_malloc_lock = NULL;
  * These are the functions that must be implemented by a secure heap (sh).
  */
 static int sh_init(size_t size, int minsize);
-static char *sh_malloc(size_t size);
-static void sh_free(char *ptr);
+static void *sh_malloc(size_t size);
+static void sh_free(void *ptr);
 static void sh_done(void);
 static size_t sh_actual_size(char *ptr);
 static int sh_allocated(const char *ptr);
@@ -68,8 +69,12 @@ int CRYPTO_secure_malloc_init(size_t size, int minsize)
         sec_malloc_lock = CRYPTO_THREAD_lock_new();
         if (sec_malloc_lock == NULL)
             return 0;
-        ret = sh_init(size, minsize);
-        secure_mem_initialized = 1;
+        if ((ret = sh_init(size, minsize)) != 0) {
+            secure_mem_initialized = 1;
+        } else {
+            CRYPTO_THREAD_lock_free(sec_malloc_lock);
+            sec_malloc_lock = NULL;
+        }
     }
 
     return ret;
@@ -85,6 +90,7 @@ int CRYPTO_secure_malloc_done()
         sh_done();
         secure_mem_initialized = 0;
         CRYPTO_THREAD_lock_free(sec_malloc_lock);
+        sec_malloc_lock = NULL;
         return 1;
     }
 #endif /* IMPLEMENTED */
@@ -336,7 +342,8 @@ static void sh_remove_from_list(char *ptr)
 
 static int sh_init(size_t size, int minsize)
 {
-    int i, ret;
+    int ret;
+    size_t i;
     size_t pgsize;
     size_t aligned;
 
@@ -352,9 +359,16 @@ static int sh_init(size_t size, int minsize)
     if (minsize <= 0 || (minsize & (minsize - 1)) != 0)
         goto err;
 
+    while (minsize < (int)sizeof(SH_LIST))
+        minsize *= 2;
+
     sh.arena_size = size;
     sh.minsize = minsize;
     sh.bittable_size = (sh.arena_size / sh.minsize) * 2;
+
+    /* Prevent allocations of size 0 later on */
+    if (sh.bittable_size >> 3 == 0)
+        goto err;
 
     sh.freelist_size = -1;
     for (i = sh.bittable_size; i; i >>= 1)
@@ -407,7 +421,6 @@ static int sh_init(size_t size, int minsize)
             close(fd);
         }
     }
-    OPENSSL_assert(sh.map_result != MAP_FAILED);
     if (sh.map_result == MAP_FAILED)
         goto err;
     sh.arena = (char *)(sh.map_result + pgsize);
@@ -426,8 +439,19 @@ static int sh_init(size_t size, int minsize)
     if (mprotect(sh.map_result + aligned, pgsize, PROT_NONE) < 0)
         ret = 2;
 
+#if defined(OPENSSL_SYS_LINUX) && defined(MLOCK_ONFAULT) && defined(SYS_mlock2)
+    if (syscall(SYS_mlock2, sh.arena, sh.arena_size, MLOCK_ONFAULT) < 0) {
+        if (errno == ENOSYS) {
+            if (mlock(sh.arena, sh.arena_size) < 0)
+                ret = 2;
+        } else {
+            ret = 2;
+        }
+    }
+#else
     if (mlock(sh.arena, sh.arena_size) < 0)
         ret = 2;
+#endif
 #ifdef MADV_DONTDUMP
     if (madvise(sh.arena, sh.arena_size, MADV_DONTDUMP) < 0)
         ret = 2;
@@ -469,11 +493,14 @@ static char *sh_find_my_buddy(char *ptr, int list)
     return chunk;
 }
 
-static char *sh_malloc(size_t size)
+static void *sh_malloc(size_t size)
 {
     ossl_ssize_t list, slist;
     size_t i;
     char *chunk;
+
+    if (size > sh.arena_size)
+        return NULL;
 
     list = sh.freelist_size - 1;
     for (i = sh.minsize; i < size; i <<= 1)
@@ -528,10 +555,10 @@ static char *sh_malloc(size_t size)
     return chunk;
 }
 
-static void sh_free(char *ptr)
+static void sh_free(void *ptr)
 {
     size_t list;
-    char *buddy;
+    void *buddy;
 
     if (ptr == NULL)
         return;

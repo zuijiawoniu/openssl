@@ -604,12 +604,20 @@ static int addrinfo_wrap(int family, int socktype,
 
 DEFINE_RUN_ONCE_STATIC(do_bio_lookup_init)
 {
+    OPENSSL_init_crypto(0, NULL);
     bio_lookup_lock = CRYPTO_THREAD_lock_new();
     return bio_lookup_lock != NULL;
 }
 
+int BIO_lookup(const char *host, const char *service,
+               enum BIO_lookup_type lookup_type,
+               int family, int socktype, BIO_ADDRINFO **res)
+{
+    return BIO_lookup_ex(host, service, lookup_type, family, socktype, 0, res);
+}
+
 /*-
- * BIO_lookup - look up the node and service you want to connect to.
+ * BIO_lookup_ex - look up the node and service you want to connect to.
  * @node: the node you want to connect to.
  * @service: the service you want to connect to.
  * @lookup_type: declare intent with the result, client or server.
@@ -617,6 +625,10 @@ DEFINE_RUN_ONCE_STATIC(do_bio_lookup_init)
  *  AF_INET, AF_INET6 or AF_UNIX.
  * @socktype: The socket type you want to use.  Can be SOCK_STREAM, SOCK_DGRAM
  *  or 0 for all.
+ * @protocol: The protocol to use, e.g. IPPROTO_TCP or IPPROTO_UDP or 0 for all.
+ *            Note that some platforms may not return IPPROTO_SCTP without
+ *            explicitly requesting it (i.e. IPPROTO_SCTP may not be returned
+ *            with 0 for the protocol)
  * @res: Storage place for the resulting list of returned addresses
  *
  * This will do a lookup of the node and service that you want to connect to.
@@ -626,9 +638,8 @@ DEFINE_RUN_ONCE_STATIC(do_bio_lookup_init)
  *
  * The return value is 1 on success or 0 in case of error.
  */
-int BIO_lookup(const char *host, const char *service,
-               enum BIO_lookup_type lookup_type,
-               int family, int socktype, BIO_ADDRINFO **res)
+int BIO_lookup_ex(const char *host, const char *service, int lookup_type,
+                  int family, int socktype, int protocol, BIO_ADDRINFO **res)
 {
     int ret = 0;                 /* Assume failure */
 
@@ -645,7 +656,7 @@ int BIO_lookup(const char *host, const char *service,
 #endif
         break;
     default:
-        BIOerr(BIO_F_BIO_LOOKUP, BIO_R_UNSUPPORTED_PROTOCOL_FAMILY);
+        BIOerr(BIO_F_BIO_LOOKUP_EX, BIO_R_UNSUPPORTED_PROTOCOL_FAMILY);
         return 0;
     }
 
@@ -654,7 +665,7 @@ int BIO_lookup(const char *host, const char *service,
         if (addrinfo_wrap(family, socktype, host, strlen(host), 0, res))
             return 1;
         else
-            BIOerr(BIO_F_BIO_LOOKUP, ERR_R_MALLOC_FAILURE);
+            BIOerr(BIO_F_BIO_LOOKUP_EX, ERR_R_MALLOC_FAILURE);
         return 0;
     }
 #endif
@@ -663,13 +674,15 @@ int BIO_lookup(const char *host, const char *service,
         return 0;
 
     if (1) {
-        int gai_ret = 0;
 #ifdef AI_PASSIVE
+        int gai_ret = 0;
         struct addrinfo hints;
+
         memset(&hints, 0, sizeof hints);
 
         hints.ai_family = family;
         hints.ai_socktype = socktype;
+        hints.ai_protocol = protocol;
 
         if (lookup_type == BIO_LOOKUP_SERVER)
             hints.ai_flags |= AI_PASSIVE;
@@ -681,14 +694,14 @@ int BIO_lookup(const char *host, const char *service,
 # ifdef EAI_SYSTEM
         case EAI_SYSTEM:
             SYSerr(SYS_F_GETADDRINFO, get_last_socket_error());
-            BIOerr(BIO_F_BIO_LOOKUP, ERR_R_SYS_LIB);
+            BIOerr(BIO_F_BIO_LOOKUP_EX, ERR_R_SYS_LIB);
             break;
 # endif
         case 0:
             ret = 1;             /* Success */
             break;
         default:
-            BIOerr(BIO_F_BIO_LOOKUP, ERR_R_SYS_LIB);
+            BIOerr(BIO_F_BIO_LOOKUP_EX, ERR_R_SYS_LIB);
             ERR_add_error_data(1, gai_strerror(gai_ret));
             break;
         }
@@ -730,7 +743,7 @@ int BIO_lookup(const char *host, const char *service,
 #endif
 
         if (!RUN_ONCE(&bio_lookup_init, do_bio_lookup_init)) {
-            BIOerr(BIO_F_BIO_LOOKUP, ERR_R_MALLOC_FAILURE);
+            BIOerr(BIO_F_BIO_LOOKUP_EX, ERR_R_MALLOC_FAILURE);
             ret = 0;
             goto err;
         }
@@ -755,8 +768,18 @@ int BIO_lookup(const char *host, const char *service,
 
             if (he == NULL) {
 #ifndef OPENSSL_SYS_WINDOWS
-                BIOerr(BIO_F_BIO_LOOKUP, ERR_R_SYS_LIB);
-                ERR_add_error_data(1, hstrerror(h_errno));
+                /*
+                 * This might be misleading, because h_errno is used as if
+                 * it was errno. To minimize mixup add 1000. Underlying
+                 * reason for this is that hstrerror is declared obsolete,
+                 * not to mention that a) h_errno is not always guaranteed
+                 * to be meaningless; b) hstrerror can reside in yet another
+                 * library, linking for sake of hstrerror is an overkill;
+                 * c) this path is not executed on contemporary systems
+                 * anyway [above getaddrinfo/gai_strerror is]. We just let
+                 * system administrator figure this out...
+                 */
+                SYSerr(SYS_F_GETHOSTBYNAME, 1000 + h_errno);
 #else
                 SYSerr(SYS_F_GETHOSTBYNAME, WSAGetLastError());
 #endif
@@ -805,15 +828,14 @@ int BIO_lookup(const char *host, const char *service,
 
                 if (se == NULL) {
 #ifndef OPENSSL_SYS_WINDOWS
-                    BIOerr(BIO_F_BIO_LOOKUP, ERR_R_SYS_LIB);
-                    ERR_add_error_data(1, hstrerror(h_errno));
+                    SYSerr(SYS_F_GETSERVBYNAME, errno);
 #else
                     SYSerr(SYS_F_GETSERVBYNAME, WSAGetLastError());
 #endif
                     goto err;
                 }
             } else {
-                BIOerr(BIO_F_BIO_LOOKUP, BIO_R_MALFORMED_HOST_OR_SERVICE);
+                BIOerr(BIO_F_BIO_LOOKUP_EX, BIO_R_MALFORMED_HOST_OR_SERVICE);
                 goto err;
             }
         }
@@ -855,7 +877,7 @@ int BIO_lookup(const char *host, const char *service,
              addrinfo_malloc_err:
                 BIO_ADDRINFO_free(*res);
                 *res = NULL;
-                BIOerr(BIO_F_BIO_LOOKUP, ERR_R_MALLOC_FAILURE);
+                BIOerr(BIO_F_BIO_LOOKUP_EX, ERR_R_MALLOC_FAILURE);
                 ret = 0;
                 goto err;
             }

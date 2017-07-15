@@ -146,15 +146,7 @@ extern "C" {
 
 # ifdef BN_DEBUG
 
-/* We only need assert() when debugging */
-#  include <assert.h>
-
 #  ifdef BN_DEBUG_RAND
-/* To avoid "make update" cvs wars due to BN_DEBUG, use some tricks */
-#   ifndef RAND_pseudo_bytes
-int RAND_pseudo_bytes(unsigned char *buf, int num);
-#    define BN_DEBUG_TRIX
-#   endif
 #   define bn_pollute(a) \
         do { \
             const BIGNUM *_bnum1 = (a); \
@@ -170,9 +162,6 @@ int RAND_pseudo_bytes(unsigned char *buf, int num);
                        sizeof(*_not_const) * (_bnum1->dmax - _bnum1->top)); \
             } \
         } while(0)
-#   ifdef BN_DEBUG_TRIX
-#    undef RAND_pseudo_bytes
-#   endif
 #  else
 #   define bn_pollute(a)
 #  endif
@@ -180,8 +169,8 @@ int RAND_pseudo_bytes(unsigned char *buf, int num);
         do { \
                 const BIGNUM *_bnum2 = (a); \
                 if (_bnum2 != NULL) { \
-                        assert((_bnum2->top == 0) || \
-                                (_bnum2->d[_bnum2->top - 1] != 0)); \
+                        OPENSSL_assert(((_bnum2->top == 0) && !_bnum2->neg) || \
+                                (_bnum2->top && (_bnum2->d[_bnum2->top - 1] != 0))); \
                         bn_pollute(_bnum2); \
                 } \
         } while(0)
@@ -192,7 +181,8 @@ int RAND_pseudo_bytes(unsigned char *buf, int num);
 #  define bn_wcheck_size(bn, words) \
         do { \
                 const BIGNUM *_bnum2 = (bn); \
-                assert((words) <= (_bnum2)->dmax && (words) >= (_bnum2)->top); \
+                OPENSSL_assert((words) <= (_bnum2)->dmax && \
+                        (words) >= (_bnum2)->top); \
                 /* avoid unused variable warning with NDEBUG */ \
                 (void)(_bnum2); \
         } while(0)
@@ -428,8 +418,8 @@ unsigned __int64 _umul128(unsigned __int64 a, unsigned __int64 b,
 #   endif
 #  elif defined(__mips) && (defined(SIXTY_FOUR_BIT) || defined(SIXTY_FOUR_BIT_LONG))
 #   if defined(__GNUC__) && __GNUC__>=2
-#    if __GNUC__>4 || (__GNUC__>=4 && __GNUC_MINOR__>=4)
-                                     /* "h" constraint is no more since 4.4 */
+#    if defined(__SIZEOF_INT128__) && __SIZEOF_INT128__==16
+      /* "h" constraint is not an option on R6 and was removed in 4.4 */
 #     define BN_UMULT_HIGH(a,b)          (((__uint128_t)(a)*(b))>>64)
 #     define BN_UMULT_LOHI(low,high,a,b) ({     \
         __uint128_t ret=(__uint128_t)(a)*(b);   \
@@ -655,10 +645,6 @@ void bn_sqr_recursive(BN_ULONG *r, const BN_ULONG *a, int n2, BN_ULONG *t);
 void bn_mul_low_normal(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n);
 void bn_mul_low_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
                           BN_ULONG *t);
-void bn_mul_high(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, BN_ULONG *l, int n2,
-                 BN_ULONG *t);
-BN_ULONG bn_add_part_words(BN_ULONG *r, const BN_ULONG *a, const BN_ULONG *b,
-                           int cl, int dl);
 BN_ULONG bn_sub_part_words(BN_ULONG *r, const BN_ULONG *a, const BN_ULONG *b,
                            int cl, int dl);
 int bn_mul_mont(BN_ULONG *rp, const BN_ULONG *ap, const BN_ULONG *bp,
@@ -670,8 +656,6 @@ BIGNUM *int_bn_mod_inverse(BIGNUM *in,
 
 int bn_probable_prime_dh(BIGNUM *rnd, int bits,
                          const BIGNUM *add, const BIGNUM *rem, BN_CTX *ctx);
-int bn_probable_prime_dh_retry(BIGNUM *rnd, int bits, BN_CTX *ctx);
-int bn_probable_prime_dh_coprime(BIGNUM *rnd, int bits, BN_CTX *ctx);
 
 static ossl_inline BIGNUM *bn_expand(BIGNUM *a, int bits)
 {

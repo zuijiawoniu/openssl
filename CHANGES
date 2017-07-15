@@ -2,9 +2,363 @@
  OpenSSL CHANGES
  _______________
 
- Changes between 1.1.0 and 1.1.1 [xx XXX xxxx]
+ This is a high-level summary of the most important changes.
+ For a full list of changes, see the git commit log; for example,
+ https://github.com/openssl/openssl/commits/ and pick the appropriate
+ release branch.
 
-  *)
+ Changes between 1.1.0f and 1.1.1 [xx XXX xxxx]
+
+  *) The UI API becomes a permanent and integral part of libcrypto, i.e.
+     not possible to disable entirely.  However, it's still possible to
+     disable the console reading UI method, UI_OpenSSL() (use UI_null()
+     as a fallback).
+
+     To disable, configure with 'no-ui-console'.  'no-ui' is still
+     possible to use as an alias.  Check at compile time with the
+     macro OPENSSL_NO_UI_CONSOLE.  The macro OPENSSL_NO_UI is still
+     possible to check and is an alias for OPENSSL_NO_UI_CONSOLE.
+     [Richard Levitte]
+
+  *) Add a STORE module, which implements a uniform and URI based reader of
+     stores that can contain keys, certificates, CRLs and numerous other
+     objects.  The main API is loosely based on a few stdio functions,
+     and includes OSSL_STORE_open, OSSL_STORE_load, OSSL_STORE_eof,
+     OSSL_STORE_error and OSSL_STORE_close.
+     The implementation uses backends called "loaders" to implement arbitrary
+     URI schemes.  There is one built in "loader" for the 'file' scheme.
+     [Richard Levitte]
+
+  *) Add devcrypto engine.  This has been implemented against cryptodev-linux,
+     then adjusted to work on FreeBSD 8.4 as well.
+     Enable by configuring with 'enable-devcryptoeng'.  This is done by default
+     on BSD implementations, as cryptodev.h is assumed to exist on all of them.
+     [Richard Levitte]
+
+  *) Module names can prefixed with OSSL_ or OPENSSL_.  This affects
+     util/mkerr.pl, which is adapted to allow those prefixes, leading to
+     error code calls like this:
+
+         OSSL_FOOerr(OSSL_FOO_F_SOMETHING, OSSL_FOO_R_WHATEVER);
+
+     With this change, we claim the namespaces OSSL and OPENSSL in a manner
+     that can be encoded in C.  For the foreseeable future, this will only
+     affect new modules.
+     [Richard Levitte and Tim Hudson]
+
+  *) Removed BSD cryptodev engine.
+     [Rich Salz]
+
+  *) Add a build target 'build_all_generated', to build all generated files
+     and only that.  This can be used to prepare everything that requires
+     things like perl for a system that lacks perl and then move everything
+     to that system and do the rest of the build there.
+     [Richard Levitte]
+
+  *) In the UI interface, make it possible to duplicate the user data.  This
+     can be used by engines that need to retain the data for a longer time
+     than just the call where this user data is passed.
+     [Richard Levitte]
+
+  *) Ignore the '-named_curve auto' value for compatibility of applications
+     with OpenSSL 1.0.2.
+     [Tomas Mraz <tmraz@fedoraproject.org>]
+
+  *) Fragmented SSL/TLS alerts are no longer accepted. An alert message is 2
+     bytes long. In theory it is permissible in SSLv3 - TLSv1.2 to fragment such
+     alerts across multiple records (some of which could be empty). In practice
+     it make no sense to send an empty alert record, or to fragment one. TLSv1.3
+     prohibts this altogether and other libraries (BoringSSL, NSS) do not
+     support this at all. Supporting it adds significant complexity to the
+     record layer, and its removal is unlikely to cause inter-operability
+     issues.
+     [Matt Caswell]
+
+  *) Add the ASN.1 types INT32, UINT32, INT64, UINT64 and variants prefixed
+     with Z.  These are meant to replace LONG and ZLONG and to be size safe.
+     The use of LONG and ZLONG is discouraged and scheduled for deprecation
+     in OpenSSL 1.2.0.
+     [Richard Levitte]
+
+  *) Add the 'z' and 'j' modifiers to BIO_printf() et al formatting string,
+     'z' is to be used for [s]size_t, and 'j' - with [u]int64_t.
+     [Richard Levitte, Andy Polyakov]
+
+  *) Add EC_KEY_get0_engine(), which does for EC_KEY what RSA_get0_engine()
+     does for RSA, etc.
+     [Richard Levitte]
+
+  *) Have 'config' recognise 64-bit mingw and choose 'mingw64' as the target
+     platform rather than 'mingw'.
+     [Richard Levitte]
+
+  *) The functions X509_STORE_add_cert and X509_STORE_add_crl return
+     success if they are asked to add an object which already exists
+     in the store. This change cascades to other functions which load
+     certificates and CRLs.
+     [Paul Dale]
+
+  *) x86_64 assembly pack: annotate code with DWARF CFI directives to
+     facilitate stack unwinding even from assembly subroutines.
+     [Andy Polyakov]
+
+  *) Remove VAX C specific definitions of OPENSSL_EXPORT, OPENSSL_EXTERN.
+     Also remove OPENSSL_GLOBAL entirely, as it became a no-op.
+     [Richard Levitte]
+
+  *) Remove the VMS-specific reimplementation of gmtime from crypto/o_times.c.
+     VMS C's RTL has a fully up to date gmtime() and gmtime_r() since V7.1,
+     which is the minimum version we support.
+     [Richard Levitte]
+
+  *) Certificate time validation (X509_cmp_time) enforces stricter
+     compliance with RFC 5280. Fractional seconds and timezone offsets
+     are no longer allowed.
+     [Emilia Käsper]
+
+  *) Add support for ARIA
+     [Paul Dale]
+
+  *) s_client will now send the Server Name Indication (SNI) extension by
+     default unless the new "-noservername" option is used. The server name is
+     based on the host provided to the "-connect" option unless overridden by
+     using "-servername".
+     [Matt Caswell]
+
+  *) Add support for SipHash
+     [Todd Short]
+
+  *) OpenSSL now fails if it receives an unrecognised record type in TLS1.0
+     or TLS1.1. Previously this only happened in SSLv3 and TLS1.2. This is to
+     prevent issues where no progress is being made and the peer continually
+     sends unrecognised record types, using up resources processing them.
+     [Matt Caswell]
+
+  *) 'openssl passwd' can now produce SHA256 and SHA512 based output,
+     using the algorithm defined in
+     https://www.akkadia.org/drepper/SHA-crypt.txt
+     [Richard Levitte]
+
+  *) Heartbeat support has been removed; the ABI is changed for now.
+     [Richard Levitte, Rich Salz]
+
+  *) Support for SSL_OP_NO_ENCRYPT_THEN_MAC in SSL_CONF_cmd.
+     [Emilia Käsper]
+
+  *) The RSA "null" method, which was partially supported to avoid patent
+     issues, has been replaced to always returns NULL.
+     [Rich Salz]
+
+ Changes between 1.1.0e and 1.1.0f [25 May 2017]
+
+  *) Have 'config' recognise 64-bit mingw and choose 'mingw64' as the target
+     platform rather than 'mingw'.
+     [Richard Levitte]
+
+  *) Remove the VMS-specific reimplementation of gmtime from crypto/o_times.c.
+     VMS C's RTL has a fully up to date gmtime() and gmtime_r() since V7.1,
+     which is the minimum version we support.
+     [Richard Levitte]
+
+ Changes between 1.1.0d and 1.1.0e [16 Feb 2017]
+
+  *) Encrypt-Then-Mac renegotiation crash
+
+     During a renegotiation handshake if the Encrypt-Then-Mac extension is
+     negotiated where it was not in the original handshake (or vice-versa) then
+     this can cause OpenSSL to crash (dependant on ciphersuite). Both clients
+     and servers are affected.
+
+     This issue was reported to OpenSSL by Joe Orton (Red Hat).
+     (CVE-2017-3733)
+     [Matt Caswell]
+
+ Changes between 1.1.0c and 1.1.0d [26 Jan 2017]
+
+  *) Truncated packet could crash via OOB read
+
+     If one side of an SSL/TLS path is running on a 32-bit host and a specific
+     cipher is being used, then a truncated packet can cause that host to
+     perform an out-of-bounds read, usually resulting in a crash.
+
+     This issue was reported to OpenSSL by Robert Święcki of Google.
+     (CVE-2017-3731)
+     [Andy Polyakov]
+
+  *) Bad (EC)DHE parameters cause a client crash
+
+     If a malicious server supplies bad parameters for a DHE or ECDHE key
+     exchange then this can result in the client attempting to dereference a
+     NULL pointer leading to a client crash. This could be exploited in a Denial
+     of Service attack.
+
+     This issue was reported to OpenSSL by Guido Vranken.
+     (CVE-2017-3730)
+     [Matt Caswell]
+
+  *) BN_mod_exp may produce incorrect results on x86_64
+
+     There is a carry propagating bug in the x86_64 Montgomery squaring
+     procedure. No EC algorithms are affected. Analysis suggests that attacks
+     against RSA and DSA as a result of this defect would be very difficult to
+     perform and are not believed likely. Attacks against DH are considered just
+     feasible (although very difficult) because most of the work necessary to
+     deduce information about a private key may be performed offline. The amount
+     of resources required for such an attack would be very significant and
+     likely only accessible to a limited number of attackers. An attacker would
+     additionally need online access to an unpatched system using the target
+     private key in a scenario with persistent DH parameters and a private
+     key that is shared between multiple clients. For example this can occur by
+     default in OpenSSL DHE based SSL/TLS ciphersuites. Note: This issue is very
+     similar to CVE-2015-3193 but must be treated as a separate problem.
+
+     This issue was reported to OpenSSL by the OSS-Fuzz project.
+     (CVE-2017-3732)
+     [Andy Polyakov]
+
+ Changes between 1.1.0b and 1.1.0c [10 Nov 2016]
+
+  *) ChaCha20/Poly1305 heap-buffer-overflow
+
+     TLS connections using *-CHACHA20-POLY1305 ciphersuites are susceptible to
+     a DoS attack by corrupting larger payloads. This can result in an OpenSSL
+     crash. This issue is not considered to be exploitable beyond a DoS.
+
+     This issue was reported to OpenSSL by Robert Święcki (Google Security Team)
+     (CVE-2016-7054)
+     [Richard Levitte]
+
+  *) CMS Null dereference
+
+     Applications parsing invalid CMS structures can crash with a NULL pointer
+     dereference. This is caused by a bug in the handling of the ASN.1 CHOICE
+     type in OpenSSL 1.1.0 which can result in a NULL value being passed to the
+     structure callback if an attempt is made to free certain invalid encodings.
+     Only CHOICE structures using a callback which do not handle NULL value are
+     affected.
+
+     This issue was reported to OpenSSL by Tyler Nighswander of ForAllSecure.
+     (CVE-2016-7053)
+     [Stephen Henson]
+
+  *) Montgomery multiplication may produce incorrect results
+
+     There is a carry propagating bug in the Broadwell-specific Montgomery
+     multiplication procedure that handles input lengths divisible by, but
+     longer than 256 bits. Analysis suggests that attacks against RSA, DSA
+     and DH private keys are impossible. This is because the subroutine in
+     question is not used in operations with the private key itself and an input
+     of the attacker's direct choice. Otherwise the bug can manifest itself as
+     transient authentication and key negotiation failures or reproducible
+     erroneous outcome of public-key operations with specially crafted input.
+     Among EC algorithms only Brainpool P-512 curves are affected and one
+     presumably can attack ECDH key negotiation. Impact was not analyzed in
+     detail, because pre-requisites for attack are considered unlikely. Namely
+     multiple clients have to choose the curve in question and the server has to
+     share the private key among them, neither of which is default behaviour.
+     Even then only clients that chose the curve will be affected.
+
+     This issue was publicly reported as transient failures and was not
+     initially recognized as a security issue. Thanks to Richard Morgan for
+     providing reproducible case.
+     (CVE-2016-7055)
+     [Andy Polyakov]
+
+  *) Removed automatic addition of RPATH in shared libraries and executables,
+     as this was a remainder from OpenSSL 1.0.x and isn't needed any more.
+     [Richard Levitte]
+
+ Changes between 1.1.0a and 1.1.0b [26 Sep 2016]
+
+  *) Fix Use After Free for large message sizes
+
+     The patch applied to address CVE-2016-6307 resulted in an issue where if a
+     message larger than approx 16k is received then the underlying buffer to
+     store the incoming message is reallocated and moved. Unfortunately a
+     dangling pointer to the old location is left which results in an attempt to
+     write to the previously freed location. This is likely to result in a
+     crash, however it could potentially lead to execution of arbitrary code.
+
+     This issue only affects OpenSSL 1.1.0a.
+
+     This issue was reported to OpenSSL by Robert Święcki.
+     (CVE-2016-6309)
+     [Matt Caswell]
+
+ Changes between 1.1.0 and 1.1.0a [22 Sep 2016]
+
+  *) OCSP Status Request extension unbounded memory growth
+
+     A malicious client can send an excessively large OCSP Status Request
+     extension. If that client continually requests renegotiation, sending a
+     large OCSP Status Request extension each time, then there will be unbounded
+     memory growth on the server. This will eventually lead to a Denial Of
+     Service attack through memory exhaustion. Servers with a default
+     configuration are vulnerable even if they do not support OCSP. Builds using
+     the "no-ocsp" build time option are not affected.
+
+     This issue was reported to OpenSSL by Shi Lei (Gear Team, Qihoo 360 Inc.)
+     (CVE-2016-6304)
+     [Matt Caswell]
+
+  *) SSL_peek() hang on empty record
+
+     OpenSSL 1.1.0 SSL/TLS will hang during a call to SSL_peek() if the peer
+     sends an empty record. This could be exploited by a malicious peer in a
+     Denial Of Service attack.
+
+     This issue was reported to OpenSSL by Alex Gaynor.
+     (CVE-2016-6305)
+     [Matt Caswell]
+
+  *) Excessive allocation of memory in tls_get_message_header() and
+     dtls1_preprocess_fragment()
+
+     A (D)TLS message includes 3 bytes for its length in the header for the
+     message. This would allow for messages up to 16Mb in length. Messages of
+     this length are excessive and OpenSSL includes a check to ensure that a
+     peer is sending reasonably sized messages in order to avoid too much memory
+     being consumed to service a connection. A flaw in the logic of version
+     1.1.0 means that memory for the message is allocated too early, prior to
+     the excessive message length check. Due to way memory is allocated in
+     OpenSSL this could mean an attacker could force up to 21Mb to be allocated
+     to service a connection. This could lead to a Denial of Service through
+     memory exhaustion. However, the excessive message length check still takes
+     place, and this would cause the connection to immediately fail. Assuming
+     that the application calls SSL_free() on the failed connection in a timely
+     manner then the 21Mb of allocated memory will then be immediately freed
+     again. Therefore the excessive memory allocation will be transitory in
+     nature. This then means that there is only a security impact if:
+
+     1) The application does not call SSL_free() in a timely manner in the event
+     that the connection fails
+     or
+     2) The application is working in a constrained environment where there is
+     very little free memory
+     or
+     3) The attacker initiates multiple connection attempts such that there are
+     multiple connections in a state where memory has been allocated for the
+     connection; SSL_free() has not yet been called; and there is insufficient
+     memory to service the multiple requests.
+
+     Except in the instance of (1) above any Denial Of Service is likely to be
+     transitory because as soon as the connection fails the memory is
+     subsequently freed again in the SSL_free() call. However there is an
+     increased risk during this period of application crashes due to the lack of
+     memory - which would then mean a more serious Denial of Service.
+
+     This issue was reported to OpenSSL by Shi Lei (Gear Team, Qihoo 360 Inc.)
+     (CVE-2016-6307 and CVE-2016-6308)
+     [Matt Caswell]
+
+  *) solaris-x86-cc, i.e. 32-bit configuration with vendor compiler,
+     had to be removed. Primary reason is that vendor assembler can't
+     assemble our modules with -KPIC flag. As result it, assembly
+     support, was not even available as option. But its lack means
+     lack of side-channel resistant code, which is incompatible with
+     security by todays standards. Fortunately gcc is readily available
+     prepackaged option, which we firmly point at...
+     [Andy Polyakov]
 
  Changes between 1.0.2h and 1.1.0  [25 Aug 2016]
 
@@ -219,7 +573,7 @@
   *) Add X25519 support.
      Add ASN.1 and EVP_PKEY methods for X25519. This includes support
      for public and private key encoding using the format documented in
-     draft-ietf-curdle-pkix-02. The coresponding EVP_PKEY method supports
+     draft-ietf-curdle-pkix-02. The corresponding EVP_PKEY method supports
      key generation and key derivation.
 
      TLS support complies with draft-ietf-tls-rfc4492bis-08 and uses
@@ -302,6 +656,12 @@
      information for each directory with source to compile, and a
      template in Configurations, like unix-Makefile.tmpl or
      descrip.mms.tmpl.
+
+     With this change, the library names were also renamed on Windows
+     and on VMS.  They now have names that are closer to the standard
+     on Unix, and include the major version number, and in certain
+     cases, the architecture they are built for.  See "Notes on shared
+     libraries" in INSTALL.
 
      We rely heavily on the perl module Text::Template.
      [Richard Levitte]
@@ -718,7 +1078,7 @@
      done while fixing the error code for the key-too-small case.
      [Annie Yousar <a.yousar@informatik.hu-berlin.de>]
 
-  *) CA.sh has been removmed; use CA.pl instead.
+  *) CA.sh has been removed; use CA.pl instead.
      [Rich Salz]
 
   *) Removed old DES API.
